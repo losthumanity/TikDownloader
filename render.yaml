@@ -1,0 +1,21 @@
+# Render.com deployment configuration
+# Visit: https://render.com/docs/deploy-fastapi
+
+# This file is used by Render.com for deployment
+version: 1
+
+services:
+  - type: web
+    name: tiktok-downloader-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: WEBHOOK_URL
+        value: https://your-app-name.onrender.com
+      - key: PORT
+        value: 10000
+      - key: DEBUG
+        value: "False"
