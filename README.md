@@ -2,6 +2,12 @@
 
 A powerful Telegram bot that downloads TikTok videos in **ultra-high quality** without watermarks. Features advanced multi-API architecture with TikDownloader.io integration for maximum quality downloads.
 
+<div align="center">
+
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/github.com/losthumanity/TikDownloader)
+
+</div>
+
 ## ✨ Features
 
 - 🏆 **Ultra HD Quality** - Up to **42MB+ files** with TikDownloader.io (13x larger than standard)
@@ -27,8 +33,8 @@ A powerful Telegram bot that downloads TikTok videos in **ultra-high quality** w
 
 ```bash
 # Clone this repository
-git clone <your-repo-url>
-cd TiktokDownloader
+git clone https://github.com/losthumanity/TikDownloader.git
+cd TikDownloader
 
 # Install dependencies
 pip install -r requirements.txt
@@ -36,8 +42,8 @@ pip install -r requirements.txt
 # Copy environment template
 cp .env.example .env
 
-# Edit .env file with your bot token
-# TELEGRAM_BOT_TOKEN=your_token_here
+# Edit .env file with your bot token (KEEP THIS PRIVATE!)
+# TELEGRAM_BOT_TOKEN=your_actual_bot_token_from_botfather
 
 # Run the bot
 python main.py
@@ -56,7 +62,7 @@ python main.py
 
 Railway offers the best free tier with automatic HTTPS and easy deployment.
 
-1. **Fork this repository** to your GitHub
+1. **Fork this repository** [losthumanity/TikDownloader](https://github.com/losthumanity/TikDownloader) to your GitHub
 2. **Sign up at [Railway](https://railway.app)** with GitHub
 3. **Create New Project** → Deploy from GitHub repo
 4. **Add Environment Variable**: `TELEGRAM_BOT_TOKEN` = your bot token
@@ -70,7 +76,7 @@ Railway offers the best free tier with automatic HTTPS and easy deployment.
 
 ### Option 2: Render
 
-1. **Fork this repository**
+1. **Fork this repository** [losthumanity/TikDownloader](https://github.com/losthumanity/TikDownloader)
 2. **Sign up at [Render](https://render.com)**
 3. **New Web Service** → Connect your repo
 4. **Configuration:**
@@ -112,7 +118,7 @@ git push heroku main
 ## 📁 Project Structure
 
 ```
-TiktokDownloader/
+TikDownloader/
 ├── 📄 main.py              # Main launcher
 ├── 🤖 bot.py               # Telegram bot logic
 ├── 📥 tiktok_downloader.py # TikTok download engine
@@ -272,6 +278,14 @@ heroku restart
 - 🔐 **Secure APIs** - All requests use HTTPS
 - 🚫 **No user tracking** - Only basic statistics
 - ♻️ **Temporary files** - Auto-cleanup after processing
+- 🔑 **Token Security** - Never commit your actual bot token to Git!
+
+### ⚠️ Important Security Notes
+
+- **NEVER** commit your `.env` file with real tokens
+- **ALWAYS** use `.env.example` as a template only
+- **KEEP** your bot token private and secure
+- **USE** environment variables in production deployments
 
 ## 📝 License
 
@@ -287,9 +301,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- 🐛 **Issues**: [GitHub Issues](https://github.com/yourusername/TiktokDownloader/issues)
-- 💬 **Telegram**: [@YourSupportBot](https://t.me/YourSupportBot)
-- 📧 **Email**: your.email@example.com
+- 🐛 **Issues**: [GitHub Issues](https://github.com/losthumanity/TikDownloader/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/losthumanity/TikDownloader/discussions)
+- 🌟 **Stars**: If this helps you, please star the repo!
 
 ## 🌟 Acknowledgments
 
