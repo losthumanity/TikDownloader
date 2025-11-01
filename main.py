@@ -7,6 +7,8 @@ import os
 import logging
 import threading
 import time
+import signal
+import sys
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -20,41 +22,56 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def run_health_server():
-    """Run the health check server"""
+    """Run the health check server with proper port binding"""
     try:
         from health_server import app
-        port = int(os.getenv('PORT', 8443))
+        # Render uses PORT 10000, Railway uses dynamic port
+        port = int(os.getenv('PORT', 10000))
         
-        # Use gunicorn for production, Flask dev server for local
-        if os.getenv('RAILWAY_ENVIRONMENT') or os.getenv('RENDER') or os.getenv('DYNO'):
-            # Production deployment
-            import gunicorn.app.wsgiapp as wsgi
-            wsgi.run()
-        else:
-            # Development
-            app.run(host='0.0.0.0', port=port, debug=False)
-            
+        logger.info(f"🏥 Starting health server on port {port}")
+        
+        # Always use Flask for simplicity and reliability
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+        
     except Exception as e:
-        logger.error(f"Health server failed to start: {e}")
+        logger.error(f"❌ Health server failed to start: {e}")
+        raise
 
 def run_telegram_bot():
-    """Run the Telegram bot"""
-    try:
-        # Small delay to ensure health server starts first
-        time.sleep(2)
-        
-        from bot import TikTokBot
-        bot = TikTokBot()
-        bot.run()
-        
-    except Exception as e:
-        logger.error(f"Telegram bot failed to start: {e}")
-        raise
+    """Run the Telegram bot with retry mechanism"""
+    max_retries = 5
+    retry_delay = 10
+    
+    for attempt in range(max_retries):
+        try:
+            # Small delay to ensure health server starts first
+            if attempt == 0:
+                time.sleep(3)
+
+            from bot import TikTokBot
+            bot = TikTokBot()
+            
+            logger.info(f"🤖 Starting Telegram bot (attempt {attempt + 1}/{max_retries})")
+            bot.run()
+            
+            # If we reach here, the bot ran successfully
+            break
+            
+        except Exception as e:
+            logger.error(f"❌ Telegram bot failed on attempt {attempt + 1}: {e}")
+            
+            if attempt < max_retries - 1:
+                logger.info(f"🔄 Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                logger.error("💥 Max retries reached. Bot will be restarted by platform.")
+                raise
 
 def main():
     """Main entry point"""
     logger.info("🚀 Starting TikTok Downloader Bot...")
-    
+
     # Check if we have the required token
     if not os.getenv('TELEGRAM_BOT_TOKEN'):
         logger.error("❌ TELEGRAM_BOT_TOKEN is required!")
@@ -64,28 +81,46 @@ def main():
         print("Get your token from @BotFather on Telegram")
         print("="*50 + "\n")
         return
+
+    # Detect production environment
+    is_production = any([
+        os.getenv('RENDER'),
+        os.getenv('RAILWAY_ENVIRONMENT'), 
+        os.getenv('DYNO'),  # Heroku
+        os.getenv('WEBHOOK_URL')
+    ])
     
-    webhook_url = os.getenv('WEBHOOK_URL')
-    
-    if webhook_url:
-        # Production mode with webhook
-        logger.info("🌐 Running in webhook mode...")
+    webhook_url = os.getenv('WEBHOOK_URL') or os.getenv('RENDER_EXTERNAL_URL')
+
+    if is_production:
+        # Production mode - Health server in main thread, bot in background
+        logger.info("🌐 Production mode detected - Starting webhook server...")
+        logger.info(f"🔗 Webhook URL: {webhook_url}")
         
-        # Start health server in background thread
-        health_thread = threading.Thread(target=run_health_server, daemon=True)
-        health_thread.start()
+        # Start keep-alive service for Render free tier
+        if os.getenv('RENDER'):
+            try:
+                from keepalive import start_keepalive
+                start_keepalive()
+                logger.info("⏰ Keep-alive service started (prevents free tier sleep)")
+            except Exception as e:
+                logger.warning(f"Keep-alive failed to start: {e}")
         
-        # Start Telegram bot
-        run_telegram_bot()
+        # Start bot in background thread
+        bot_thread = threading.Thread(target=run_telegram_bot, daemon=True)
+        bot_thread.start()
+        
+        # Health server runs in main thread (keeps process alive)
+        run_health_server()
     else:
-        # Development mode with polling
-        logger.info("🔄 Running in polling mode...")
+        # Development mode - Bot in main thread, health server in background
+        logger.info("� Development mode - Starting polling bot...")
         
-        # Start health server in background thread for local development
+        # Start health server in background for local testing
         health_thread = threading.Thread(target=run_health_server, daemon=True)
         health_thread.start()
         
-        # Start Telegram bot
+        # Bot runs in main thread
         run_telegram_bot()
 
 if __name__ == "__main__":

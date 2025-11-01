@@ -54,14 +54,14 @@ pip install -r requirements.txt
 if [ ! -f .env ]; then
     echo "📝 Creating .env file..."
     cp .env.example .env
-    
+
     echo ""
     echo "⚙️ Please edit the .env file and add your Telegram bot token:"
     echo "   TELEGRAM_BOT_TOKEN=your_token_here"
     echo ""
     echo "Get your token from @BotFather on Telegram"
     echo ""
-    
+
     # Try to open .env in default editor
     if command -v code &> /dev/null; then
         echo "🔧 Opening .env in VS Code..."

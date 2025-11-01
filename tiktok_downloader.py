@@ -104,7 +104,7 @@ class TikTokDownloader:
                 'web': 1,
                 'hd': 1
             }
-            
+
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                 'Accept': 'application/json, text/plain, */*',
@@ -113,25 +113,25 @@ class TikTokDownloader:
                 'Origin': 'https://www.tikwm.com',
                 'Referer': 'https://www.tikwm.com/'
             }
-            
+
             self.logger.info(f"TikWM API: Requesting video info for {url}")
-            
+
             async with self.session.post(
-                'https://www.tikwm.com/api/', 
-                data=data, 
+                'https://www.tikwm.com/api/',
+                data=data,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30)
             ) as response:
-                
+
                 self.logger.info(f"TikWM API response status: {response.status}")
-                
+
                 if response.status == 200:
                     result = await response.json()
                     self.logger.info(f"TikWM API response: {result}")
-                    
+
                     if result.get('code') == 0 and result.get('data'):
                         data = result['data']
-                        
+
                         # Get HD video URL (without watermark)
                         video_url = data.get('hdplay') or data.get('play')
 
@@ -139,7 +139,7 @@ class TikTokDownloader:
                             # Fix relative URLs by prepending the base URL
                             if video_url.startswith('/'):
                                 video_url = 'https://www.tikwm.com' + video_url
-                            
+
                             self.logger.info(f"TikWM API: Got video URL: {video_url[:100]}...")
                             return {
                                 'success': True,
@@ -158,18 +158,18 @@ class TikTokDownloader:
                 else:
                     response_text = await response.text()
                     self.logger.error(f"TikWM API HTTP error {response.status}: {response_text[:200]}")
-                    
+
         except Exception as e:
             self.logger.error(f"TikWM API error: {e}")
             self.logger.exception("Full exception:")
-        
+
         return None
 
     async def download_with_tikdownloader_io(self, url: str) -> Optional[Dict]:
         """Download using tikdownloader.io API (High Quality)"""
         try:
             search_url = "https://tikdownloader.io/api/ajaxSearch"
-            
+
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'application/json, text/javascript, */*; q=0.01',
@@ -179,18 +179,18 @@ class TikTokDownloader:
                 'Referer': 'https://tikdownloader.io/en',
                 'X-Requested-With': 'XMLHttpRequest'
             }
-            
+
             data = {
                 'q': url,
                 'lang': 'en'
             }
-            
+
             self.logger.info(f"TikDownloader.io API: Requesting video info for {url}")
-            
+
             async with self.session.post(search_url, data=data, headers=headers) as response:
                 if response.status == 200:
                     result = await response.json()
-                    
+
                     if 'data' in result:
                         html_content = result['data']
                         return self._parse_tikdownloader_io_response(html_content, url)
@@ -198,10 +198,10 @@ class TikTokDownloader:
                         self.logger.error(f"TikDownloader.io API: No data in response: {result}")
                 else:
                     self.logger.error(f"TikDownloader.io API HTTP error: {response.status}")
-                    
+
         except Exception as e:
             self.logger.error(f"TikDownloader.io API error: {e}")
-            
+
         return None
 
     def _parse_tikdownloader_io_response(self, html_content: str, original_url: str) -> Optional[Dict]:
@@ -211,16 +211,16 @@ class TikTokDownloader:
             title_match = re.search(r'<h3[^>]*>(.*?)</h3>', html_content)
             title = title_match.group(1) if title_match else "TikTok Video"
             title = re.sub(r'<[^>]+>', '', title).strip()  # Remove HTML tags
-            
+
             # Find download links - prioritize HD
             download_patterns = [
                 r'href="([^"]*)" rel="nofollow"[^>]*><i class="icon icon-download"></i>\s*Download MP4\s*HD',  # HD first
                 r'href="([^"]*)" rel="nofollow"[^>]*><i class="icon icon-download"></i>\s*Download MP4(?:\s*\[1\])?',  # Standard quality
             ]
-            
+
             best_video_url = None
             quality = 'Unknown'
-            
+
             # Try to find HD quality first
             for pattern in download_patterns:
                 matches = re.findall(pattern, html_content, re.IGNORECASE | re.DOTALL)
@@ -229,7 +229,7 @@ class TikTokDownloader:
                     quality = 'HD' if 'HD' in pattern else 'Standard'
                     self.logger.info(f"TikDownloader.io: Found {quality} quality video")
                     break
-            
+
             # If no download links found, try direct CDN links
             if not best_video_url:
                 cdn_pattern = r'https://v16-[^.]+\.tiktokcdn\.com/[^"\'\\s]+(?:\.mp4)?'
@@ -238,7 +238,7 @@ class TikTokDownloader:
                     best_video_url = cdn_matches[0]
                     quality = 'CDN_Direct'
                     self.logger.info(f"TikDownloader.io: Found direct CDN link")
-            
+
             if best_video_url:
                 return {
                     'success': True,
@@ -253,11 +253,11 @@ class TikTokDownloader:
             else:
                 self.logger.error("TikDownloader.io: No video URL found in response")
                 return None
-                
+
         except Exception as e:
             self.logger.error(f"TikDownloader.io parsing error: {e}")
             return None
-    
+
     async def download_with_musicaldown(self, url: str) -> Optional[Dict]:
         """Download using musicaldown.com API"""
         try:
@@ -439,7 +439,7 @@ class TikTokDownloader:
         if not video_url:
             self.logger.error("No video URL provided")
             return None
-            
+
         try:
             # Try different headers for video download
             headers = {
@@ -453,20 +453,20 @@ class TikTokDownloader:
                 'Sec-Fetch-Mode': 'cors',
                 'Sec-Fetch-Site': 'cross-site'
             }
-            
+
             self.logger.info(f"Attempting to download video from: {video_url[:100]}...")
-            
+
             # Follow redirects and download
             async with self.session.get(
-                video_url, 
-                headers=headers, 
+                video_url,
+                headers=headers,
                 allow_redirects=True,
                 timeout=aiohttp.ClientTimeout(total=120)  # Increased timeout for larger files
             ) as response:
-                
+
                 self.logger.info(f"Video download response status: {response.status}")
                 self.logger.info(f"Response headers: {dict(response.headers)}")
-                
+
                 if response.status == 200:
                     content = await response.read()
                     if len(content) > 1000:  # Must be at least 1KB to be a valid video
@@ -483,7 +483,7 @@ class TikTokDownloader:
                         return await self.download_video_file(redirect_url)
                 else:
                     self.logger.error(f"HTTP error {response.status}: {response.reason}")
-                    
+
         except asyncio.TimeoutError:
             self.logger.error("Video download timed out")
         except Exception as e:

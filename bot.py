@@ -524,11 +524,28 @@ Ready to download? Just send me a TikTok link! 🚀
             )
 
     def run(self):
-        """Run the bot"""
+        """Run the bot with automatic webhook/polling detection"""
         # Create application
         app = Application.builder().token(self.token).build()
-
-        # Add handlers
+        
+        # Add all handlers
+        self._add_handlers(app)
+        
+        # Detect production environment
+        is_production = any([
+            os.getenv('RENDER'),
+            os.getenv('RAILWAY_ENVIRONMENT'),
+            os.getenv('DYNO'),
+            os.getenv('WEBHOOK_URL')
+        ])
+        
+        if is_production:
+            self._run_webhook(app)
+        else:
+            self._run_polling(app)
+    
+    def _add_handlers(self, app):
+        """Add all handlers to the application"""
         app.add_handler(CommandHandler("start", self.start_command))
         app.add_handler(CommandHandler("help", self.help_command))
         app.add_handler(CommandHandler("stats", self.stats_command))
@@ -545,22 +562,48 @@ Ready to download? Just send me a TikTok link! 🚀
             filters.TEXT & ~filters.COMMAND,
             self.handle_other_messages
         ))
-
-        # Setup webhook or polling
-        port = int(os.getenv('PORT', 8443))
-        webhook_url = os.getenv('WEBHOOK_URL')
-
-        if webhook_url:
-            logger.info(f"Starting webhook on port {port}")
+    
+    def _run_webhook(self, app):
+        """Run bot in webhook mode for production"""
+        webhook_url = os.getenv('WEBHOOK_URL') or os.getenv('RENDER_EXTERNAL_URL')
+        
+        if not webhook_url:
+            logger.error("❌ No webhook URL provided for production mode!")
+            logger.info("🔄 Falling back to polling mode...")
+            self._run_polling(app)
+            return
+        
+        # Use webhook path without token for better security
+        webhook_path = f"webhook/{self.token}"
+        
+        logger.info("🌐 Starting webhook mode...")
+        logger.info(f"🔗 Webhook URL: {webhook_url}/{webhook_path}")
+        
+        try:
             app.run_webhook(
                 listen="0.0.0.0",
-                port=port,
-                url_path=self.token,
-                webhook_url=f"{webhook_url}/{self.token}"
+                port=int(os.getenv('PORT', 10000)),  # Render uses 10000
+                url_path=webhook_path,
+                webhook_url=f"{webhook_url}/{webhook_path}",
+                drop_pending_updates=True,
+                allowed_updates=Update.ALL_TYPES
             )
-        else:
-            logger.info("Starting polling...")
-            app.run_polling()
+        except Exception as e:
+            logger.error(f"❌ Webhook failed: {e}")
+            logger.info("🔄 Falling back to polling...")
+            self._run_polling(app)
+    
+    def _run_polling(self, app):
+        """Run bot in polling mode for development"""
+        logger.info("🔄 Starting polling mode...")
+        try:
+            app.run_polling(
+                drop_pending_updates=True,
+                allowed_updates=Update.ALL_TYPES
+            )
+        except Exception as e:
+            logger.error(f"❌ Polling failed: {e}")
+            raise
 
 def main():
     """Main entry point"""

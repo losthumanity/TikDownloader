@@ -37,14 +37,14 @@ REM Create .env file if it doesn't exist
 if not exist .env (
     echo 📝 Creating .env file...
     copy .env.example .env
-    
+
     echo.
     echo ⚙️ Please edit the .env file and add your Telegram bot token:
     echo    TELEGRAM_BOT_TOKEN=your_token_here
     echo.
     echo Get your token from @BotFather on Telegram
     echo.
-    
+
     REM Try to open .env in default editor
     if exist "C:\Program Files\Microsoft VS Code\bin\code.cmd" (
         echo 🔧 Opening .env in VS Code...

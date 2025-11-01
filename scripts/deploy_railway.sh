@@ -10,7 +10,7 @@ echo "========================================="
 if ! command -v railway &> /dev/null; then
     echo "❌ Railway CLI not found!"
     echo "📥 Installing Railway CLI..."
-    
+
     # Detect OS and install accordingly
     if [[ "$OSTYPE" == "darwin"* ]]; then
         # macOS

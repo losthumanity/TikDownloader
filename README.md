@@ -11,7 +11,7 @@ A powerful Telegram bot that downloads TikTok videos in **ultra-high quality** w
 ## ✨ Features
 
 - 🏆 **Ultra HD Quality** - Up to **42MB+ files** with TikDownloader.io (13x larger than standard)
-- ✅ **No Watermarks** - Clean videos without TikTok branding  
+- ✅ **No Watermarks** - Clean videos without TikTok branding
 - � **Smart Fallback System** - Primary: TikDownloader.io → Backup: TikWM → Alternative: MusicalDown
 - 🎵 **Original Audio** - Maintains original audio quality
 - 🛡️ **Robust Error Handling** - Graceful fallbacks and user feedback
@@ -56,64 +56,67 @@ python main.py
 3. Send any TikTok video link
 4. Wait for your HD video download!
 
-## 🌐 Free Deployment Options
+## 🌐 Deployment Options
 
-### Option 1: Railway (Recommended)
+### ⚠️ **Important Legal Notice**
 
-Railway offers the best free tier with automatic HTTPS and easy deployment.
+**Before deploying, please consider:**
+- TikTok content is copyrighted material
+- Some hosting platforms may restrict content downloading bots
+- Always check the platform's Terms of Service
+- Consider personal/educational use only
 
-1. **Fork this repository** [losthumanity/TikDownloader](https://github.com/losthumanity/TikDownloader) to your GitHub
-2. **Sign up at [Railway](https://railway.app)** with GitHub
-3. **Create New Project** → Deploy from GitHub repo
-4. **Add Environment Variable**: `TELEGRAM_BOT_TOKEN` = your bot token
-5. **Deploy** - Railway will automatically build and deploy!
+### Option 1: Personal VPS (Recommended for Safety)
 
-**Railway Benefits:**
-- ✅ 500 hours/month free
-- ✅ Automatic HTTPS 
-- ✅ Zero configuration
-- ✅ GitHub integration
+For maximum control and compliance:
 
-### Option 2: Render
+1. **Get a VPS** from providers like DigitalOcean, Linode, or Vultr
+2. **Install Python 3.12+** and dependencies
+3. **Clone and setup** the bot
+4. **Run with systemd** for auto-restart
+5. **Use your own domain** for webhook
 
-1. **Fork this repository** [losthumanity/TikDownloader](https://github.com/losthumanity/TikDownloader)
-2. **Sign up at [Render](https://render.com)**
-3. **New Web Service** → Connect your repo
-4. **Configuration:**
-   - Build Command: `pip install -r requirements.txt`
-   - Start Command: `python main.py`
-5. **Environment Variables:**
-   - `TELEGRAM_BOT_TOKEN` = your bot token
-   - `WEBHOOK_URL` = your Render app URL
-6. **Deploy**
+**VPS Benefits:**
+- ✅ Full control over hosting
+- ✅ No platform restrictions
+- ✅ Better performance
+- ✅ Educational/personal use friendly
 
-**Render Benefits:**
-- ✅ 750 hours/month free
-- ✅ Automatic SSL
-- ✅ Easy scaling
+### Option 2: Local Development Only
 
-### Option 3: Heroku
+**Safest approach for personal use:**
 
-1. **Install [Heroku CLI](https://devcenter.heroku.com/articles/heroku-cli)**
-2. **Login and create app:**
 ```bash
-heroku login
-heroku create your-bot-name
-```
-3. **Set environment variables:**
-```bash
-heroku config:set TELEGRAM_BOT_TOKEN=your_token_here
-heroku config:set WEBHOOK_URL=https://your-bot-name.herokuapp.com
-```
-4. **Deploy:**
-```bash
-git push heroku main
+# Run locally on your computer
+git clone https://github.com/losthumanity/TikDownloader.git
+cd TikDownloader
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with your bot token
+python main.py
 ```
 
-**Heroku Benefits:**
-- ✅ 550-1000 hours/month free
-- ✅ Easy CLI deployment
-- ✅ Add-ons ecosystem
+**Local Benefits:**
+- ✅ No hosting restrictions
+- ✅ Full control
+- ✅ Perfect for personal use
+- ✅ No legal concerns
+
+### Option 3: Docker Container (Advanced)
+
+**For tech-savvy users with own infrastructure:**
+
+```bash
+# Build and run with Docker
+docker build -t tiktok-downloader .
+docker run -e TELEGRAM_BOT_TOKEN=your_token tiktok-downloader
+```
+
+**Docker Benefits:**
+- ✅ Isolated environment
+- ✅ Easy deployment anywhere
+- ✅ Consistent setup
+- ✅ Works on any Docker-compatible host
 
 ## 📁 Project Structure
 
@@ -167,7 +170,7 @@ The bot automatically detects:
 The bot uses a **smart multi-API architecture** prioritized by quality:
 
 1. **🏆 TikDownloader.io** - **Ultra HD Primary** (up to 42MB+ files, 8K quality)
-2. **🥈 tikwm.com** - HD Backup (3-4MB files, 1080p quality)  
+2. **🥈 tikwm.com** - HD Backup (3-4MB files, 1080p quality)
 3. **🥉 musicaldown.com** - Standard Backup
 4. **🔄 Fallback scraping** - Direct TikTok page parsing
 
@@ -186,7 +189,7 @@ The bot uses a **smart multi-API architecture** prioritized by quality:
 ## 📊 Bot Commands
 
 - `/start` - Welcome message and main menu
-- `/help` - Detailed help and instructions  
+- `/help` - Detailed help and instructions
 - `/stats` - Bot usage statistics
 - 📱 **Send TikTok URL** - Download video automatically
 
@@ -221,7 +224,7 @@ python -c "from tiktok_downloader import download_tiktok_video; import asyncio; 
 
 The bot logs all activities:
 - ✅ Successful downloads
-- ❌ Failed attempts  
+- ❌ Failed attempts
 - 📊 User statistics
 - 🐛 Error details
 
@@ -254,7 +257,7 @@ The bot logs all activities:
 # Check logs
 railway logs
 
-# Restart service  
+# Restart service
 railway service restart
 ```
 
