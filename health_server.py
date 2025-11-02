@@ -111,21 +111,6 @@ def webhook_fallback():
     """Fallback webhook endpoint"""
     return jsonify({'status': 'ok', 'message': 'Webhook received'})
 
-@app.route('/')
-def root():
-    """Root endpoint with bot information"""
-    return jsonify({
-        'name': 'TikTok HD Downloader Bot',
-        'version': '2.0',
-        'description': 'Downloads TikTok videos in HD quality without watermarks',
-        'status': 'running',
-        'uptime': str(datetime.now() - start_time).split('.')[0],
-        'endpoints': {
-            'health': '/health',
-            'webhook': '/webhook'
-        }
-    })
-
 def run_health_server(port=8443):
     """Run the health check server in a separate thread"""
     try:
