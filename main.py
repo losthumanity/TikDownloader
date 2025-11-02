@@ -9,6 +9,7 @@ import threading
 import time
 import signal
 import sys
+import asyncio
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -44,10 +45,6 @@ def run_telegram_bot():
     
     for attempt in range(max_retries):
         try:
-            # Small delay to ensure health server starts first
-            if attempt == 0:
-                time.sleep(3)
-
             from bot import TikTokBot
             bot = TikTokBot()
             
@@ -106,12 +103,15 @@ def main():
             except Exception as e:
                 logger.warning(f"Keep-alive failed to start: {e}")
         
-        # Start bot in background thread
-        bot_thread = threading.Thread(target=run_telegram_bot, daemon=True)
-        bot_thread.start()
+        # Start health server in background thread
+        health_thread = threading.Thread(target=run_health_server, daemon=True)
+        health_thread.start()
         
-        # Health server runs in main thread (keeps process alive)
-        run_health_server()
+        # Small delay to let health server start
+        time.sleep(2)
+        
+        # Bot runs in main thread (better for asyncio event loop)
+        run_telegram_bot()
     else:
         # Development mode - Bot in main thread, health server in background
         logger.info("� Development mode - Starting polling bot...")
