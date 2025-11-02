@@ -99,50 +99,29 @@ def webhook(token):
                 update = Update.de_json(update_json, telegram_app.bot)
                 logger.info(f"Processing Telegram update: {update.update_id}")
                 
-                # Use asyncio.run_coroutine_threadsafe to schedule the update processing
-                # on the application's event loop that was created during initialization
-                # This is the proper way to call async code from sync context
-                try:
-                    # Get the bot's running event loop
-                    loop = telegram_app.updater.running
-                    if loop:
-                        # Schedule the coroutine on the existing loop
-                        asyncio.run_coroutine_threadsafe(
-                            telegram_app.process_update(update),
-                            loop
-                        )
-                    else:
-                        # Fallback: create a task in a new thread with its own loop
-                        def process_in_thread():
-                            try:
-                                loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(loop)
-                                loop.run_until_complete(telegram_app.process_update(update))
-                            except Exception as e:
-                                logger.error(f"Error processing update: {e}", exc_info=True)
-                            finally:
-                                try:
-                                    loop.run_until_complete(loop.shutdown_asyncgens())
-                                finally:
-                                    loop.close()
-                        
-                        threading.Thread(target=process_in_thread, daemon=True).start()
-                except AttributeError:
-                    # If updater.running doesn't exist, fall back to thread approach
-                    def process_in_thread():
+                # Process update in a background thread with a persistent event loop
+                def process_in_thread():
+                    """Process update in a thread with its own event loop"""
+                    try:
+                        # Check if this thread already has an event loop
                         try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_closed():
+                                raise RuntimeError("Loop is closed")
+                        except RuntimeError:
+                            # Create a new event loop for this thread
                             loop = asyncio.new_event_loop()
                             asyncio.set_event_loop(loop)
-                            loop.run_until_complete(telegram_app.process_update(update))
-                        except Exception as e:
-                            logger.error(f"Error processing update: {e}", exc_info=True)
-                        finally:
-                            try:
-                                loop.run_until_complete(loop.shutdown_asyncgens())
-                            finally:
-                                loop.close()
-                    
-                    threading.Thread(target=process_in_thread, daemon=True).start()
+                        
+                        # Process the update - DO NOT close the loop after
+                        # The loop needs to stay alive for the bot's HTTP client
+                        loop.run_until_complete(telegram_app.process_update(update))
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing update: {e}", exc_info=True)
+                
+                # Start processing in a daemon thread
+                threading.Thread(target=process_in_thread, daemon=True).start()
                 
                 return jsonify(status='ok'), 200
                 
