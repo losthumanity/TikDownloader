@@ -301,11 +301,11 @@ Need more help? Contact @YourSupportUsername
                     for char in special_chars:
                         text = text.replace(char, '\\' + char)
                     return text
-                
+
                 title = escape_markdown(result.get('title', 'TikTok Video')[:100])
                 author = escape_markdown(result.get('author', 'Unknown'))
                 quality = escape_markdown(result.get('quality', 'HD'))
-                
+
                 # Prepare caption without Markdown to avoid parsing errors
                 caption = (
                     f"🎬 TikTok Video Downloaded\n\n"

@@ -89,7 +89,7 @@ def wake():
 def webhook(token):
     """Webhook endpoint to receive updates from Telegram."""
     update_activity()
-    
+
     # Use the globally stored app instance from wsgi.py
     if 'bot' in sys.modules and hasattr(sys.modules['bot'], 'telegram_app'):
         telegram_app = sys.modules['bot'].telegram_app
@@ -98,7 +98,7 @@ def webhook(token):
                 update_json = request.get_json(force=True)
                 update = Update.de_json(update_json, telegram_app.bot)
                 logger.info(f"Processing Telegram update: {update.update_id}")
-                
+
                 # Process update in a background thread with a persistent event loop
                 def process_in_thread():
                     """Process update in a thread with its own event loop"""
@@ -112,23 +112,23 @@ def webhook(token):
                             # Create a new event loop for this thread
                             loop = asyncio.new_event_loop()
                             asyncio.set_event_loop(loop)
-                        
+
                         # Process the update - DO NOT close the loop after
                         # The loop needs to stay alive for the bot's HTTP client
                         loop.run_until_complete(telegram_app.process_update(update))
-                        
+
                     except Exception as e:
                         logger.error(f"Error processing update: {e}", exc_info=True)
-                
+
                 # Start processing in a daemon thread
                 threading.Thread(target=process_in_thread, daemon=True).start()
-                
+
                 return jsonify(status='ok'), 200
-                
+
             except Exception as e:
                 logger.error(f"Webhook processing error: {e}", exc_info=True)
                 return jsonify(status='error', message=str(e)), 500
-    
+
     logger.warning("Webhook called with invalid token or uninitialized app")
     return jsonify(status='error', message='Invalid token or uninitialized app'), 403@app.route('/webhook', methods=['POST'])
 def webhook_fallback():
