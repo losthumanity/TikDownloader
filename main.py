@@ -11,6 +11,7 @@ import signal
 import sys
 import asyncio
 from dotenv import load_dotenv
+from telegram import Update
 
 # Load environment variables
 load_dotenv()
@@ -76,94 +77,71 @@ def main():
     webhook_url = os.getenv('WEBHOOK_URL') or os.getenv('RENDER_EXTERNAL_URL')
 
     if is_production:
-        # Production mode - Initialize bot and run Flask server
-        logger.info("🌐 Production mode detected - Starting Flask server with webhook...")
+        # Production mode: Use a single async main function
+        logger.info("🌐 Production mode detected - Starting bot and web server...")
         logger.info(f"🔗 Webhook URL: {webhook_url}")
 
-        # Initialize bot and store globally for Flask webhook handling
         from bot import TikTokBot
-        bot_instance = TikTokBot()
-        
-        # Configure webhook and store bot reference
-        import sys
-        import bot
         from telegram.ext import Application
-        app = Application.builder().token(bot_instance.token).build()
-        bot_instance._add_handlers(app)
-        
-        # Set webhook URL
-        webhook_path = f"webhook/{bot_instance.token}"
-        full_webhook_url = f"{webhook_url}/{webhook_path}" if webhook_url else None
+        import asyncio
 
-        if full_webhook_url:
-            # Configure webhook and initialize application asynchronously
-            import asyncio
-            async def setup_webhook_and_app():
-                # CRITICAL: Initialize the application first
-                await app.initialize()
-                await app.start()
-                
-                # Then set the webhook
+        async def main_async():
+            """The main asynchronous function to run the bot and server."""
+            # Initialize bot and application
+            bot_instance = TikTokBot()
+            app = Application.builder().token(bot_instance.token).build()
+            bot_instance._add_handlers(app)
+
+            # Store the application globally for Flask to access
+            import sys
+            import bot
+            bot.telegram_app = app
+            sys.modules['bot'].telegram_app = app
+
+            # CRITICAL: Initialize the application
+            await app.initialize()
+
+            # Start the health server in a background thread
+            # It's synchronous, so it needs its own thread.
+            health_thread = threading.Thread(target=run_health_server, daemon=True)
+            health_thread.start()
+            logger.info("🚀 Flask server started in background thread")
+
+            # Start keep-alive service if on Render
+            if os.getenv('RENDER'):
+                try:
+                    from keepalive import start_keepalive
+                    start_keepalive()
+                    logger.info("⏰ Keep-alive service started")
+                except Exception as e:
+                    logger.warning(f"Could not start keep-alive service: {e}")
+
+            # Configure the webhook
+            webhook_path = f"webhook/{bot_instance.token}"
+            full_webhook_url = f"{webhook_url}/{webhook_path}" if webhook_url else None
+
+            if full_webhook_url:
                 await app.bot.set_webhook(
                     url=full_webhook_url,
-                    drop_pending_updates=True
+                    drop_pending_updates=True,
+                    allowed_updates=Update.ALL_TYPES
                 )
                 logger.info(f"✅ Webhook configured: {full_webhook_url}")
-                logger.info("✅ Application initialized and ready")
 
-            # Run webhook setup and app initialization
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(setup_webhook_and_app())
-            finally:
-                loop.close()
+            # Start the application's background tasks (e.g., job queue)
+            await app.start()
+            logger.info("✅ Telegram Application started and ready for updates")
 
-        # Store the initialized application globally for Flask to access
-        bot.telegram_app = app
-        sys.modules['bot'].telegram_app = app
+            # Keep the main async function alive to provide the event loop
+            while True:
+                await asyncio.sleep(3600) # Sleep for an hour
 
-        # Start keep-alive service for Render free tier
-        if os.getenv('RENDER'):
-            try:
-                from keepalive import start_keepalive
-                start_keepalive()
-                logger.info("⏰ Keep-alive service started")
-            except Exception as e:
-                logger.warning(f"Keep-alive failed: {e}")
+        # Run the main async function
+        try:
+            asyncio.run(main_async())
+        except (KeyboardInterrupt, SystemExit):
+            logger.info("Bot shutting down gracefully...")
 
-        # Set up cleanup handlers for production
-        import signal
-        import atexit
-        
-        def cleanup_app():
-            """Clean up the Telegram application on shutdown"""
-            try:
-                if 'bot' in sys.modules and hasattr(sys.modules['bot'], 'telegram_app'):
-                    app = sys.modules['bot'].telegram_app
-                    if app:
-                        import asyncio
-                        try:
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            loop.run_until_complete(app.stop())
-                            loop.run_until_complete(app.shutdown())
-                            loop.close()
-                            logger.info("✅ Application cleaned up")
-                        except Exception as e:
-                            logger.warning(f"Cleanup warning: {e}")
-            except Exception as e:
-                logger.warning(f"Cleanup error: {e}")
-
-        # Register cleanup handlers
-        atexit.register(cleanup_app)
-        signal.signal(signal.SIGTERM, lambda sig, frame: cleanup_app())
-        signal.signal(signal.SIGINT, lambda sig, frame: cleanup_app())
-
-        # Run Flask server in main thread (handles both health checks and webhooks)
-        logger.info("🚀 Starting Flask server (main thread)...")
-        run_health_server()
-        
     else:
         # Development mode - Bot polling with health server in background
         logger.info("💻 Development mode - Starting polling bot...")

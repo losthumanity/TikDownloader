@@ -598,7 +598,7 @@ Ready to download? Just send me a TikTok link! 🚀
     def _run_webhook(self, app):
         """Configure webhook for Flask integration (no separate server)"""
         webhook_url = os.getenv('WEBHOOK_URL') or os.getenv('RENDER_EXTERNAL_URL')
-        
+
         # For Render, construct URL from service name if not provided
         if not webhook_url and os.getenv('RENDER'):
             service_name = "tikdownloader"  # Should match render.yaml service name
@@ -650,14 +650,14 @@ Ready to download? Just send me a TikTok link! 🚀
             logger.info("🔄 Webhook mode active - Flask handles all requests")
             import signal
             import time
-            
+
             def signal_handler(sig, frame):
                 logger.info("Received shutdown signal")
                 raise KeyboardInterrupt
-            
+
             signal.signal(signal.SIGTERM, signal_handler)
             signal.signal(signal.SIGINT, signal_handler)
-            
+
             try:
                 while True:
                     time.sleep(60)
@@ -675,7 +675,7 @@ Ready to download? Just send me a TikTok link! 🚀
         try:
             # Create fresh event loop for polling
             import asyncio
-            
+
             # Close any existing loop
             try:
                 existing_loop = asyncio.get_event_loop()
@@ -683,11 +683,11 @@ Ready to download? Just send me a TikTok link! 🚀
                     existing_loop.close()
             except RuntimeError:
                 pass  # No loop exists
-            
+
             # Create and set new event loop
             new_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(new_loop)
-            
+
             app.run_polling(
                 drop_pending_updates=True,
                 allowed_updates=Update.ALL_TYPES
