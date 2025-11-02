@@ -122,6 +122,27 @@ def test_production_mode():
         webhook_url = os.getenv('WEBHOOK_URL')
         print(f"✅ Webhook URL: {webhook_url}")
         
+        # Test application initialization
+        from telegram.ext import Application
+        app = Application.builder().token(bot.token).build()
+        bot._add_handlers(app)
+        
+        import asyncio
+        async def test_app_init():
+            await app.initialize()
+            await app.start()
+            await app.stop()
+            await app.shutdown()
+            return True
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(test_app_init())
+            print("✅ Application initialization works correctly")
+        finally:
+            loop.close()
+        
         return True
     except Exception as e:
         print(f"❌ Production mode test failed: {e}")

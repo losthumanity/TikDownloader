@@ -91,31 +91,37 @@ def main():
         app = Application.builder().token(bot_instance.token).build()
         bot_instance._add_handlers(app)
         
-        # Store the application globally for Flask to access
-        bot.telegram_app = app
-        sys.modules['bot'].telegram_app = app
-
         # Set webhook URL
         webhook_path = f"webhook/{bot_instance.token}"
         full_webhook_url = f"{webhook_url}/{webhook_path}" if webhook_url else None
 
         if full_webhook_url:
-            # Configure webhook asynchronously
+            # Configure webhook and initialize application asynchronously
             import asyncio
-            async def setup_webhook():
+            async def setup_webhook_and_app():
+                # CRITICAL: Initialize the application first
+                await app.initialize()
+                await app.start()
+                
+                # Then set the webhook
                 await app.bot.set_webhook(
                     url=full_webhook_url,
                     drop_pending_updates=True
                 )
                 logger.info(f"✅ Webhook configured: {full_webhook_url}")
+                logger.info("✅ Application initialized and ready")
 
-            # Run webhook setup
+            # Run webhook setup and app initialization
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                loop.run_until_complete(setup_webhook())
+                loop.run_until_complete(setup_webhook_and_app())
             finally:
                 loop.close()
+
+        # Store the initialized application globally for Flask to access
+        bot.telegram_app = app
+        sys.modules['bot'].telegram_app = app
 
         # Start keep-alive service for Render free tier
         if os.getenv('RENDER'):
@@ -125,6 +131,34 @@ def main():
                 logger.info("⏰ Keep-alive service started")
             except Exception as e:
                 logger.warning(f"Keep-alive failed: {e}")
+
+        # Set up cleanup handlers for production
+        import signal
+        import atexit
+        
+        def cleanup_app():
+            """Clean up the Telegram application on shutdown"""
+            try:
+                if 'bot' in sys.modules and hasattr(sys.modules['bot'], 'telegram_app'):
+                    app = sys.modules['bot'].telegram_app
+                    if app:
+                        import asyncio
+                        try:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            loop.run_until_complete(app.stop())
+                            loop.run_until_complete(app.shutdown())
+                            loop.close()
+                            logger.info("✅ Application cleaned up")
+                        except Exception as e:
+                            logger.warning(f"Cleanup warning: {e}")
+            except Exception as e:
+                logger.warning(f"Cleanup error: {e}")
+
+        # Register cleanup handlers
+        atexit.register(cleanup_app)
+        signal.signal(signal.SIGTERM, lambda sig, frame: cleanup_app())
+        signal.signal(signal.SIGINT, lambda sig, frame: cleanup_app())
 
         # Run Flask server in main thread (handles both health checks and webhooks)
         logger.info("🚀 Starting Flask server (main thread)...")
@@ -149,6 +183,7 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("👋 Bot stopped by user")
+        # Cleanup will be handled by atexit
     except Exception as e:
         logger.error(f"💥 Bot crashed: {e}")
         raise
