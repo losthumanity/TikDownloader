@@ -110,7 +110,7 @@ def main():
 
     from bot import TikTokBot
     bot_instance = TikTokBot()
-    bot_instance.run_polling()
+    bot_instance.run()  # Use run() method, not run_polling()
 
 
 if __name__ == '__main__':

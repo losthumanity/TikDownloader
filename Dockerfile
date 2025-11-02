@@ -26,13 +26,16 @@ RUN mkdir -p /tmp/downloads
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+ENV PORT=10000
+ENV IS_PRODUCTION=true
 
 # Expose port (Railway, Render will override this)
-EXPOSE 8443
+EXPOSE 10000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; import os; port=os.getenv('PORT', '8443'); requests.get(f'http://localhost:{port}/health', timeout=5)" || exit 1
+    CMD python -c "import requests; import os; port=os.getenv('PORT', '10000'); requests.get(f'http://localhost:{port}/health', timeout=5)" || exit 1
 
-# Run the bot
-CMD ["python", "main.py"]
+# Run the application using Gunicorn WSGI server
+# Use shell form to allow environment variable expansion
+CMD gunicorn --worker-class gevent --workers 1 --bind 0.0.0.0:$PORT wsgi:app
