@@ -59,7 +59,7 @@ Keep-alive resumes → Service stays active again
 ### **🔄 Auto-Recovery**
 ```
 If bot crashes → Render auto-restarts
-If memory issues → Process restarts automatically  
+If memory issues → Process restarts automatically
 If webhook fails → Bot switches to polling (fallback)
 ```
 
@@ -128,7 +128,7 @@ RENDER=true
 **Yes, your bot will work 24/7 on Render free tier with this setup!**
 
 - ✅ **Auto-starts** when someone sends a message
-- ✅ **Stays active** with keep-alive services  
+- ✅ **Stays active** with keep-alive services
 - ✅ **Self-recovers** from crashes
 - ✅ **Zero manual intervention** needed
 - ✅ **Works locally** and on Render seamlessly
