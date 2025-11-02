@@ -39,47 +39,17 @@ def run_health_server():
         raise
 
 def run_telegram_bot():
-    """Run the Telegram bot with retry mechanism"""
-    max_retries = 5
-    retry_delay = 10
+    """Run the Telegram bot"""
+    try:
+        from bot import TikTokBot
+        bot = TikTokBot()
 
-    for attempt in range(max_retries):
-        bot = None
-        try:
-            # Import and create fresh bot instance for each attempt
-            import importlib
-            import sys
-            
-            # Clear module cache to get fresh instances
-            if 'bot' in sys.modules:
-                importlib.reload(sys.modules['bot'])
-            
-            from bot import TikTokBot
-            bot = TikTokBot()
+        logger.info("🤖 Starting Telegram bot...")
+        bot.run()
 
-            logger.info(f"🤖 Starting Telegram bot (attempt {attempt + 1}/{max_retries})")
-            bot.run()
-
-            # If we reach here, the bot ran successfully
-            break
-
-        except Exception as e:
-            logger.error(f"❌ Telegram bot failed on attempt {attempt + 1}: {e}")
-
-            # Clean up bot instance
-            if bot:
-                try:
-                    del bot
-                except:
-                    pass
-
-            if attempt < max_retries - 1:
-                logger.info(f"🔄 Retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
-                retry_delay *= 2  # Exponential backoff
-            else:
-                logger.error("💥 Max retries reached. Bot will be restarted by platform.")
-                raise
+    except Exception as e:
+        logger.error(f"❌ Telegram bot failed: {e}")
+        raise
 
 def main():
     """Main entry point"""

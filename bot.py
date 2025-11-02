@@ -299,7 +299,7 @@ Need more help? Contact @YourSupportUsername
 
 ✨ Downloaded without watermark in HD quality!
 
-🤖 @YourBotUsername
+🤖 @tikdownload98_bot
                 """.strip()
 
                 # Send video
@@ -539,18 +539,13 @@ Ready to download? Just send me a TikTok link! 🚀
             os.getenv('WEBHOOK_URL')
         ])
 
-        try:
-            if is_production:
-                self._run_webhook(app)
-            else:
-                self._run_polling(app)
-        finally:
-            # Ensure proper cleanup
-            try:
-                if hasattr(app, 'stop'):
-                    app.stop()
-            except:
-                pass
+        # Clear any existing webhook first (this fixes the conflict issue)
+        self._clear_webhook(app)
+
+        if is_production:
+            self._run_webhook(app)
+        else:
+            self._run_polling(app)
 
     def _add_handlers(self, app):
         """Add all handlers to the application"""
@@ -571,6 +566,32 @@ Ready to download? Just send me a TikTok link! 🚀
             self.handle_other_messages
         ))
 
+    def _clear_webhook(self, app):
+        """Clear any existing webhook to prevent conflicts"""
+        try:
+            import asyncio
+
+            async def clear_webhook():
+                await app.bot.delete_webhook(drop_pending_updates=True)
+                logger.info("🧹 Cleared existing webhook")
+
+            # Check if there's already an event loop
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    raise RuntimeError("Loop is closed")
+            except RuntimeError:
+                # No loop or closed loop, create new one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            # Run webhook clearing without closing the loop
+            loop.run_until_complete(clear_webhook())
+
+        except Exception as e:
+            logger.warning(f"Could not clear webhook: {e}")
+            # Continue anyway - this is not critical
+
     def _run_webhook(self, app):
         """Run bot in webhook mode for production"""
         webhook_url = os.getenv('WEBHOOK_URL') or os.getenv('RENDER_EXTERNAL_URL')
@@ -578,7 +599,8 @@ Ready to download? Just send me a TikTok link! 🚀
         if not webhook_url:
             logger.error("❌ No webhook URL provided for production mode!")
             logger.info("🔄 Falling back to polling mode...")
-            raise Exception("No webhook URL configured")
+            self._run_polling(app)
+            return
 
         # Use webhook path without token for better security
         webhook_path = f"webhook/{self.token}"
@@ -589,7 +611,7 @@ Ready to download? Just send me a TikTok link! 🚀
         try:
             app.run_webhook(
                 listen="0.0.0.0",
-                port=int(os.getenv('PORT', 10000)),  # Render uses 10000
+                port=int(os.getenv('PORT', 8443)),  # Use different port for development
                 url_path=webhook_path,
                 webhook_url=f"{webhook_url}/{webhook_path}",
                 drop_pending_updates=True,
@@ -597,7 +619,8 @@ Ready to download? Just send me a TikTok link! 🚀
             )
         except Exception as e:
             logger.error(f"❌ Webhook failed: {e}")
-            raise  # Don't fall back here, let the retry mechanism handle it
+            logger.info("🔄 Falling back to polling...")
+            self._run_polling(app)
 
     def _run_polling(self, app):
         """Run bot in polling mode for development"""
