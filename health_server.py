@@ -89,7 +89,7 @@ def wake():
 def webhook(token):
     """Webhook endpoint to receive updates from Telegram."""
     update_activity()
-
+    
     # Use the globally stored app instance from wsgi.py
     if 'bot' in sys.modules and hasattr(sys.modules['bot'], 'telegram_app'):
         telegram_app = sys.modules['bot'].telegram_app
@@ -98,41 +98,60 @@ def webhook(token):
                 update_json = request.get_json(force=True)
                 update = Update.de_json(update_json, telegram_app.bot)
                 logger.info(f"Processing Telegram update: {update.update_id}")
-
-                # Process the update asynchronously using the app's existing event loop
-                # This approach uses asyncio.create_task which schedules the coroutine
-                # on the application's main event loop that was created in wsgi.py
-                import concurrent.futures
-
-                def process_in_thread():
-                    """Process update in a thread-safe manner"""
-                    try:
-                        # Create a new event loop for this thread
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
+                
+                # Use asyncio.run_coroutine_threadsafe to schedule the update processing
+                # on the application's event loop that was created during initialization
+                # This is the proper way to call async code from sync context
+                try:
+                    # Get the bot's running event loop
+                    loop = telegram_app.updater.running
+                    if loop:
+                        # Schedule the coroutine on the existing loop
+                        asyncio.run_coroutine_threadsafe(
+                            telegram_app.process_update(update),
+                            loop
+                        )
+                    else:
+                        # Fallback: create a task in a new thread with its own loop
+                        def process_in_thread():
+                            try:
+                                loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(loop)
+                                loop.run_until_complete(telegram_app.process_update(update))
+                            except Exception as e:
+                                logger.error(f"Error processing update: {e}", exc_info=True)
+                            finally:
+                                try:
+                                    loop.run_until_complete(loop.shutdown_asyncgens())
+                                finally:
+                                    loop.close()
+                        
+                        threading.Thread(target=process_in_thread, daemon=True).start()
+                except AttributeError:
+                    # If updater.running doesn't exist, fall back to thread approach
+                    def process_in_thread():
                         try:
-                            # Process the update
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
                             loop.run_until_complete(telegram_app.process_update(update))
+                        except Exception as e:
+                            logger.error(f"Error processing update: {e}", exc_info=True)
                         finally:
-                            # Clean up but don't close the loop immediately
-                            loop.run_until_complete(loop.shutdown_asyncgens())
-                            loop.close()
-                    except Exception as e:
-                        logger.error(f"Error processing update: {e}", exc_info=True)
-
-                # Use a thread pool to process updates without blocking
-                threading.Thread(target=process_in_thread, daemon=True).start()
-
+                            try:
+                                loop.run_until_complete(loop.shutdown_asyncgens())
+                            finally:
+                                loop.close()
+                    
+                    threading.Thread(target=process_in_thread, daemon=True).start()
+                
                 return jsonify(status='ok'), 200
-
+                
             except Exception as e:
                 logger.error(f"Webhook processing error: {e}", exc_info=True)
                 return jsonify(status='error', message=str(e)), 500
-
+    
     logger.warning("Webhook called with invalid token or uninitialized app")
-    return jsonify(status='error', message='Invalid token or uninitialized app'), 403
-
-@app.route('/webhook', methods=['POST'])
+    return jsonify(status='error', message='Invalid token or uninitialized app'), 403@app.route('/webhook', methods=['POST'])
 def webhook_fallback():
     """Fallback webhook endpoint"""
     return jsonify({'status': 'ok', 'message': 'Webhook received'})

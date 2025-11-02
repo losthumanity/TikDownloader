@@ -291,27 +291,38 @@ Need more help? Contact @YourSupportUsername
                 temp_file_path = temp_file.name
 
             try:
-                # Prepare caption
-                caption = f"""
-🎬 **TikTok Video Downloaded**
+                # Escape special characters for Markdown
+                def escape_markdown(text):
+                    """Escape special characters for Markdown V2"""
+                    if not text:
+                        return "Unknown"
+                    # For MarkdownV1, we need to escape: _ * [ ] ( ) ~ ` > # + - = | { } . !
+                    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+                    for char in special_chars:
+                        text = text.replace(char, '\\' + char)
+                    return text
+                
+                title = escape_markdown(result.get('title', 'TikTok Video')[:100])
+                author = escape_markdown(result.get('author', 'Unknown'))
+                quality = escape_markdown(result.get('quality', 'HD'))
+                
+                # Prepare caption without Markdown to avoid parsing errors
+                caption = (
+                    f"🎬 TikTok Video Downloaded\n\n"
+                    f"📝 Title: {result.get('title', 'TikTok Video')[:100]}\n"
+                    f"👤 Author: @{result.get('author', 'Unknown')}\n"
+                    f"🎯 Quality: {result.get('quality', 'HD')}\n"
+                    f"📱 Size: {file_size / (1024*1024):.1f}MB\n\n"
+                    f"✨ Downloaded without watermark in HD quality!\n\n"
+                    f"🤖 @tikdownload98_bot"
+                )
 
-📝 **Title:** {result.get('title', 'TikTok Video')[:100]}
-👤 **Author:** @{result.get('author', 'Unknown')}
-🎯 **Quality:** {result.get('quality', 'HD')}
-📱 **Size:** {file_size / (1024*1024):.1f}MB
-
-✨ Downloaded without watermark in HD quality!
-
-🤖 @tikdownload98_bot
-                """.strip()
-
-                # Send video
+                # Send video without Markdown parsing
                 with open(temp_file_path, 'rb') as video_file:
                     await context.bot.send_video(
                         chat_id=update.effective_chat.id,
                         video=video_file,
                         caption=caption,
-                        parse_mode=ParseMode.MARKDOWN,
                         supports_streaming=True,
                         reply_to_message_id=message.message_id
                     )
