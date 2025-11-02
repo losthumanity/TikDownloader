@@ -32,7 +32,7 @@ EXPOSE 8443
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8443/health', timeout=5)" || exit 1
+    CMD python -c "import requests; import os; port=os.getenv('PORT', '8443'); requests.get(f'http://localhost:{port}/health', timeout=5)" || exit 1
 
 # Run the bot
 CMD ["python", "main.py"]

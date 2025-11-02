@@ -24,6 +24,9 @@ from tiktok_downloader import download_tiktok_video
 # Load environment variables
 load_dotenv()
 
+# Global variable for Flask webhook integration
+telegram_app = None
+
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -40,7 +43,7 @@ class TikTokBot:
     def __init__(self):
         self.token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.admin_chat_id = os.getenv('ADMIN_CHAT_ID')
-        self.max_file_size = 200 * 1024 * 1024  # 50MB Telegram limit
+        self.max_file_size = 50 * 1024 * 1024  # 50MB Telegram limit
 
         if not self.token:
             raise ValueError("TELEGRAM_BOT_TOKEN is required in environment variables")
@@ -593,8 +596,13 @@ Ready to download? Just send me a TikTok link! 🚀
             # Continue anyway - this is not critical
 
     def _run_webhook(self, app):
-        """Run bot in webhook mode for production"""
+        """Configure webhook for Flask integration (no separate server)"""
         webhook_url = os.getenv('WEBHOOK_URL') or os.getenv('RENDER_EXTERNAL_URL')
+        
+        # For Render, construct URL from service name if not provided
+        if not webhook_url and os.getenv('RENDER'):
+            service_name = "tikdownloader"  # Should match render.yaml service name
+            webhook_url = f"https://{service_name}.onrender.com"
 
         if not webhook_url:
             logger.error("❌ No webhook URL provided for production mode!")
@@ -602,23 +610,62 @@ Ready to download? Just send me a TikTok link! 🚀
             self._run_polling(app)
             return
 
-        # Use webhook path without token for better security
+        # Use webhook path without exposing token
         webhook_path = f"webhook/{self.token}"
+        full_webhook_url = f"{webhook_url}/{webhook_path}"
 
-        logger.info("🌐 Starting webhook mode...")
-        logger.info(f"🔗 Webhook URL: {webhook_url}/{webhook_path}")
+        logger.info("🌐 Configuring webhook mode...")
+        logger.info(f"🔗 Webhook URL: {full_webhook_url}")
 
         try:
-            app.run_webhook(
-                listen="0.0.0.0",
-                port=int(os.getenv('PORT', 8443)),  # Use different port for development
-                url_path=webhook_path,
-                webhook_url=f"{webhook_url}/{webhook_path}",
-                drop_pending_updates=True,
-                allowed_updates=Update.ALL_TYPES
-            )
+            # Set webhook using proper async context
+            async def configure_webhook():
+                await app.bot.set_webhook(
+                    url=full_webhook_url,
+                    drop_pending_updates=True,
+                    allowed_updates=Update.ALL_TYPES
+                )
+                logger.info("✅ Webhook configured successfully")
+
+            # Use existing event loop if available
+            import asyncio
+            try:
+                # Try to get existing loop
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    raise RuntimeError("Loop is closed")
+            except RuntimeError:
+                # Create new loop if none exists or closed
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            # Run webhook configuration
+            loop.run_until_complete(configure_webhook())
+
+            # Store app globally for Flask webhook handling
+            import sys
+            sys.modules[__name__].telegram_app = app
+
+            # Keep the main thread alive - Flask handles all HTTP requests
+            logger.info("🔄 Webhook mode active - Flask handles all requests")
+            import signal
+            import time
+            
+            def signal_handler(sig, frame):
+                logger.info("Received shutdown signal")
+                raise KeyboardInterrupt
+            
+            signal.signal(signal.SIGTERM, signal_handler)
+            signal.signal(signal.SIGINT, signal_handler)
+            
+            try:
+                while True:
+                    time.sleep(60)
+            except KeyboardInterrupt:
+                logger.info("Webhook mode shutting down...")
+
         except Exception as e:
-            logger.error(f"❌ Webhook failed: {e}")
+            logger.error(f"❌ Webhook configuration failed: {e}")
             logger.info("🔄 Falling back to polling...")
             self._run_polling(app)
 
@@ -626,6 +673,21 @@ Ready to download? Just send me a TikTok link! 🚀
         """Run bot in polling mode for development"""
         logger.info("🔄 Starting polling mode...")
         try:
+            # Create fresh event loop for polling
+            import asyncio
+            
+            # Close any existing loop
+            try:
+                existing_loop = asyncio.get_event_loop()
+                if not existing_loop.is_closed():
+                    existing_loop.close()
+            except RuntimeError:
+                pass  # No loop exists
+            
+            # Create and set new event loop
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            
             app.run_polling(
                 drop_pending_updates=True,
                 allowed_updates=Update.ALL_TYPES

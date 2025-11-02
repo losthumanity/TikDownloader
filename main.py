@@ -76,37 +76,72 @@ def main():
     webhook_url = os.getenv('WEBHOOK_URL') or os.getenv('RENDER_EXTERNAL_URL')
 
     if is_production:
-        # Production mode - Health server in main thread, bot in background
-        logger.info("🌐 Production mode detected - Starting webhook server...")
+        # Production mode - Initialize bot and run Flask server
+        logger.info("🌐 Production mode detected - Starting Flask server with webhook...")
         logger.info(f"🔗 Webhook URL: {webhook_url}")
+
+        # Initialize bot and store globally for Flask webhook handling
+        from bot import TikTokBot
+        bot_instance = TikTokBot()
+        
+        # Configure webhook and store bot reference
+        import sys
+        import bot
+        from telegram.ext import Application
+        app = Application.builder().token(bot_instance.token).build()
+        bot_instance._add_handlers(app)
+        
+        # Store the application globally for Flask to access
+        bot.telegram_app = app
+        sys.modules['bot'].telegram_app = app
+
+        # Set webhook URL
+        webhook_path = f"webhook/{bot_instance.token}"
+        full_webhook_url = f"{webhook_url}/{webhook_path}" if webhook_url else None
+
+        if full_webhook_url:
+            # Configure webhook asynchronously
+            import asyncio
+            async def setup_webhook():
+                await app.bot.set_webhook(
+                    url=full_webhook_url,
+                    drop_pending_updates=True
+                )
+                logger.info(f"✅ Webhook configured: {full_webhook_url}")
+
+            # Run webhook setup
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(setup_webhook())
+            finally:
+                loop.close()
 
         # Start keep-alive service for Render free tier
         if os.getenv('RENDER'):
             try:
                 from keepalive import start_keepalive
                 start_keepalive()
-                logger.info("⏰ Keep-alive service started (prevents free tier sleep)")
+                logger.info("⏰ Keep-alive service started")
             except Exception as e:
-                logger.warning(f"Keep-alive failed to start: {e}")
+                logger.warning(f"Keep-alive failed: {e}")
 
-        # Start health server in background thread
-        health_thread = threading.Thread(target=run_health_server, daemon=True)
-        health_thread.start()
-
-        # Small delay to let health server start
-        time.sleep(2)
-
-        # Bot runs in main thread (better for asyncio event loop)
-        run_telegram_bot()
+        # Run Flask server in main thread (handles both health checks and webhooks)
+        logger.info("🚀 Starting Flask server (main thread)...")
+        run_health_server()
+        
     else:
-        # Development mode - Bot in main thread, health server in background
-        logger.info("� Development mode - Starting polling bot...")
+        # Development mode - Bot polling with health server in background
+        logger.info("💻 Development mode - Starting polling bot...")
 
         # Start health server in background for local testing
         health_thread = threading.Thread(target=run_health_server, daemon=True)
         health_thread.start()
 
-        # Bot runs in main thread
+        # Small delay for health server to start
+        time.sleep(1)
+
+        # Bot runs in main thread with polling
         run_telegram_bot()
 
 if __name__ == "__main__":

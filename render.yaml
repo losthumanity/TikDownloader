@@ -6,7 +6,7 @@ version: 1
 
 services:
   - type: web
-    name: tiktok-downloader-bot
+    name: tikdownloader
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
@@ -14,9 +14,13 @@ services:
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
+      - key: WEBHOOK_URL
+        value: https://tikdownloader.onrender.com
       - key: RENDER_EXTERNAL_URL
-        sync: false
+        value: https://tikdownloader.onrender.com
       - key: RENDER
         value: "true"
+      - key: PORT
+        value: "10000"
     healthCheckPath: /health
     autoDeploy: true

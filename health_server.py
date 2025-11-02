@@ -95,12 +95,57 @@ def webhook(token):
         if not expected_token or not token:
             return jsonify({'status': 'error', 'message': 'Invalid token'}), 401
 
-        # Log webhook activity
-        logger.info(f"Webhook received from Telegram")
+        # Get the Telegram app instance
+        try:
+            import bot
+            telegram_app = getattr(bot, 'telegram_app', None)
+            if telegram_app is None:
+                logger.warning("Telegram app not yet initialized")
+                return jsonify({'status': 'pending', 'message': 'Bot initializing...'}), 202
+        except Exception as e:
+            logger.error(f"Cannot access telegram app: {e}")
+            return jsonify({'status': 'error', 'message': 'Bot not available'}), 503
 
-        # The actual webhook handling is done by python-telegram-bot
-        # This endpoint just needs to exist for routing
-        return jsonify({'status': 'ok'})
+        # Get update data from request
+        update_data = request.get_json(force=True)
+        if not update_data:
+            logger.error("No JSON data received in webhook")
+            return jsonify({'status': 'error', 'message': 'No data received'}), 400
+
+        # Log webhook activity
+        logger.info(f"Processing Telegram update: {update_data.get('update_id', 'unknown')}")
+
+        # Process the update
+        try:
+            from telegram import Update
+            import asyncio
+
+            # Create Update object from JSON
+            update = Update.de_json(update_data, telegram_app.bot)
+            if not update:
+                logger.error("Failed to parse update data")
+                return jsonify({'status': 'error', 'message': 'Invalid update data'}), 400
+
+            # Process update in background (don't block webhook response)
+            def process_update():
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        loop.run_until_complete(telegram_app.process_update(update))
+                    finally:
+                        loop.close()
+                except Exception as e:
+                    logger.error(f"Error processing update: {e}")
+
+            import threading
+            threading.Thread(target=process_update, daemon=True).start()
+
+            return jsonify({'status': 'ok'})
+
+        except Exception as e:
+            logger.error(f"Update processing error: {e}")
+            return jsonify({'status': 'error', 'message': str(e)}), 500
 
     except Exception as e:
         logger.error(f"Webhook error: {e}")
