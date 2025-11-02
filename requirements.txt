@@ -7,3 +7,4 @@ validators==0.34.0
 Pillow==10.4.0
 Flask==3.0.3
 gunicorn==23.0.0
+gevent==24.2.1

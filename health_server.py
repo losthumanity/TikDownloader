@@ -4,11 +4,13 @@ Used for deployment monitoring and webhook testing
 """
 
 from flask import Flask, jsonify, request
+from telegram import Update
+import asyncio
+import sys
+import threading
 import os
 import logging
 from datetime import datetime
-import threading
-import time
 
 # Create Flask app for health checks
 app = Flask(__name__)
@@ -85,71 +87,50 @@ def wake():
 
 @app.route('/webhook/<token>', methods=['POST'])
 def webhook(token):
-    """Webhook endpoint for receiving Telegram updates"""
-    try:
-        # Update activity on webhook calls (user interaction)
-        update_activity()
+    """Webhook endpoint to receive updates from Telegram."""
+    update_activity()
 
-        # Validate token (basic security)
-        expected_token = os.getenv('TELEGRAM_BOT_TOKEN')
-        if not expected_token or not token:
-            return jsonify({'status': 'error', 'message': 'Invalid token'}), 401
+    # Use the globally stored app instance from wsgi.py
+    if 'bot' in sys.modules and hasattr(sys.modules['bot'], 'telegram_app'):
+        telegram_app = sys.modules['bot'].telegram_app
+        if telegram_app and telegram_app.bot.token == token:
+            try:
+                update_json = request.get_json(force=True)
+                update = Update.de_json(update_json, telegram_app.bot)
+                logger.info(f"Processing Telegram update: {update.update_id}")
 
-        # Get the Telegram app instance
-        try:
-            import bot
-            telegram_app = getattr(bot, 'telegram_app', None)
-            if telegram_app is None:
-                logger.warning("Telegram app not yet initialized")
-                return jsonify({'status': 'pending', 'message': 'Bot initializing...'}), 202
-        except Exception as e:
-            logger.error(f"Cannot access telegram app: {e}")
-            return jsonify({'status': 'error', 'message': 'Bot not available'}), 503
+                # Process the update asynchronously using the app's existing event loop
+                # This approach uses asyncio.create_task which schedules the coroutine
+                # on the application's main event loop that was created in wsgi.py
+                import concurrent.futures
 
-        # Get update data from request
-        update_data = request.get_json(force=True)
-        if not update_data:
-            logger.error("No JSON data received in webhook")
-            return jsonify({'status': 'error', 'message': 'No data received'}), 400
-
-        # Log webhook activity
-        logger.info(f"Processing Telegram update: {update_data.get('update_id', 'unknown')}")
-
-        # Process the update
-        try:
-            from telegram import Update
-            import asyncio
-
-            # Create Update object from JSON
-            update = Update.de_json(update_data, telegram_app.bot)
-            if not update:
-                logger.error("Failed to parse update data")
-                return jsonify({'status': 'error', 'message': 'Invalid update data'}), 400
-
-            # Process update in background (don't block webhook response)
-            def process_update():
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
+                def process_in_thread():
+                    """Process update in a thread-safe manner"""
                     try:
-                        loop.run_until_complete(telegram_app.process_update(update))
-                    finally:
-                        loop.close()
-                except Exception as e:
-                    logger.error(f"Error processing update: {e}")
+                        # Create a new event loop for this thread
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            # Process the update
+                            loop.run_until_complete(telegram_app.process_update(update))
+                        finally:
+                            # Clean up but don't close the loop immediately
+                            loop.run_until_complete(loop.shutdown_asyncgens())
+                            loop.close()
+                    except Exception as e:
+                        logger.error(f"Error processing update: {e}", exc_info=True)
 
-            import threading
-            threading.Thread(target=process_update, daemon=True).start()
+                # Use a thread pool to process updates without blocking
+                threading.Thread(target=process_in_thread, daemon=True).start()
 
-            return jsonify({'status': 'ok'})
+                return jsonify(status='ok'), 200
 
-        except Exception as e:
-            logger.error(f"Update processing error: {e}")
-            return jsonify({'status': 'error', 'message': str(e)}), 500
+            except Exception as e:
+                logger.error(f"Webhook processing error: {e}", exc_info=True)
+                return jsonify(status='error', message=str(e)), 500
 
-    except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+    logger.warning("Webhook called with invalid token or uninitialized app")
+    return jsonify(status='error', message='Invalid token or uninitialized app'), 403
 
 @app.route('/webhook', methods=['POST'])
 def webhook_fallback():

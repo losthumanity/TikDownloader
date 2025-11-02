@@ -9,8 +9,10 @@ services:
     name: tikdownloader
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    # The build command installs dependencies.
+    buildCommand: "pip install -r requirements.txt"
+    # The start command runs the Gunicorn server, pointing to the wsgi.py file.
+    startCommand: "gunicorn --worker-class gevent --bind 0.0.0.0:$PORT wsgi:app"
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
