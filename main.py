@@ -39,9 +39,21 @@ async def initialize_bot_for_production():
     import sys
     import bot
 
-    # Initialize bot and application
+    # Initialize bot and application with proper HTTP client configuration
+    from telegram.request import HTTPXRequest
+
     bot_instance = TikTokBot()
-    app = Application.builder().token(bot_instance.token).build()
+
+    # Create application with custom HTTP request handler to avoid event loop issues
+    request = HTTPXRequest(
+        connection_pool_size=8,
+        read_timeout=30,
+        write_timeout=60,  # Increased for large video uploads
+        connect_timeout=10,
+        pool_timeout=5,
+    )
+
+    app = Application.builder().token(bot_instance.token).request(request).build()
     bot_instance._add_handlers(app)
 
     # Store the application globally for Flask/WSGI to access
@@ -110,7 +122,7 @@ def main():
 
     from bot import TikTokBot
     bot_instance = TikTokBot()
-    bot_instance.run()  # Use run() method, not run_polling()
+    bot_instance.run()
 
 
 if __name__ == '__main__':

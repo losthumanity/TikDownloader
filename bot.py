@@ -43,10 +43,15 @@ class TikTokBot:
     def __init__(self):
         self.token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.admin_chat_id = os.getenv('ADMIN_CHAT_ID')
-        self.max_file_size = 50 * 1024 * 1024  # 50MB Telegram limit
+        self.storage_channel_id = os.getenv('STORAGE_CHANNEL_ID')
+        self.max_file_size = 50 * 1024 * 1024  # 50MB Telegram limit for direct upload
+        self.max_channel_file_size = 400 * 1024 * 1024  # 400MB limit for channel storage
 
         if not self.token:
             raise ValueError("TELEGRAM_BOT_TOKEN is required in environment variables")
+
+        if not self.storage_channel_id:
+            logger.warning("STORAGE_CHANNEL_ID not set - large file storage will not work")
 
         # Statistics
         self.stats = {
@@ -55,6 +60,14 @@ class TikTokBot:
             'failed_downloads': 0,
             'start_time': datetime.now()
         }
+
+        # User quality preferences (user_id: quality)
+        # Quality options: 'hd' (default), 'standard'
+        self.user_quality_preferences = {}
+
+        # Temporary storage for large file requests
+        # Format: {user_id: {'url': original_url, 'video_url': direct_link, 'result': video_info}}
+        self.pending_large_files = {}
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command"""
@@ -142,7 +155,7 @@ Ready to download? Just send me a TikTok link! 🚀
 ❌ **"Video not found"** - Video might be deleted/private
 ❌ **"Download failed"** - Try again or check if video exists
 
-Need more help? Contact @YourSupportUsername
+Need more help? Contact @SupportBot
         """
 
         keyboard = [
@@ -190,6 +203,46 @@ Need more help? Contact @YourSupportUsername
             reply_markup=reply_markup
         )
 
+    async def quality_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /quality command"""
+        user_id = update.effective_user.id
+        current_quality = self.user_quality_preferences.get(user_id, 'hd')
+
+        if current_quality == 'hd':
+            current_setting = "Auto HD ✅"
+            hd_marker = " ✅"
+            std_marker = ""
+        else:
+            current_setting = "Standard ✅"
+            hd_marker = ""
+            std_marker = " ✅"
+
+        quality_message = f"""
+⚙️ **Quality Settings**
+
+**Available Options:**
+🔥 **Auto HD** - Best quality available{hd_marker}
+📺 **Standard** - Good quality, faster download{std_marker}
+🎵 **Audio Only** - Extract MP3 (Coming soon)
+
+**Current Setting:** {current_setting}
+
+Choose your preferred quality setting below:
+        """
+
+        keyboard = [
+            [InlineKeyboardButton("🔥 Auto HD", callback_data="quality_hd")],
+            [InlineKeyboardButton("📺 Standard", callback_data="quality_standard")],
+            [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="back_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            quality_message,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
+
     async def handle_tiktok_url(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle TikTok URL messages"""
         user = update.effective_user
@@ -227,14 +280,18 @@ Need more help? Contact @YourSupportUsername
             # Download video
             logger.info(f"Processing TikTok URL: {tiktok_url} for user {user.id}")
 
+            # Get user's quality preference
+            user_quality = self.user_quality_preferences.get(user.id, 'hd')
+            quality_text = "HD" if user_quality == 'hd' else "Standard"
+
             # Update processing message
             await processing_message.edit_text(
-                "🔄 **Processing your request...**\n\n"
-                "📥 Downloading HD video...",
+                f"🔄 **Processing your request...**\n\n"
+                f"📥 Downloading {quality_text} video...",
                 parse_mode=ParseMode.MARKDOWN
             )
 
-            result = await download_tiktok_video(tiktok_url)
+            result = await download_tiktok_video(tiktok_url, quality=user_quality)
 
             if not result.get('success'):
                 error_message = result.get('error', 'Unknown error occurred')
@@ -262,14 +319,35 @@ Need more help? Contact @YourSupportUsername
             file_size = len(video_data)
 
             if file_size > self.max_file_size:
+                # Store the request for later if user wants the link
+                user_id = update.effective_user.id
+                self.pending_large_files[user_id] = {
+                    'url': tiktok_url,
+                    'video_url': result.get('video_url'),
+                    'result': result,
+                    'quality': user_quality
+                }
+
+                # Create inline keyboard with options
+                keyboard = [
+                    [InlineKeyboardButton("☁️ Get via Cloud Storage", callback_data="large_file_link")],
+                    [InlineKeyboardButton("📺 Try Standard Quality", callback_data="large_file_standard")],
+                    [InlineKeyboardButton("❌ Cancel", callback_data="large_file_cancel")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
                 await processing_message.edit_text(
-                    f"❌ **File Too Large**\n\n"
-                    f"Video size: {file_size / (1024*1024):.1f}MB\n"
-                    f"Telegram limit: {self.max_file_size / (1024*1024)}MB\n\n"
-                    "Try downloading a shorter video.",
-                    parse_mode=ParseMode.MARKDOWN
+                    f"⚠️ **File Size Limit Exceeded**\n\n"
+                    f"📊 Video size: **{file_size / (1024*1024):.1f}MB**\n"
+                    f"📱 Telegram limit: **{self.max_file_size / (1024*1024):.0f}MB**\n\n"
+                    f"**What would you like to do?**\n\n"
+                    f"☁️ **Get via Cloud Storage** - Upload to cloud, receive video in chat\n"
+                    f"📺 **Try Standard Quality** - Download in lower quality (smaller file)\n"
+                    f"❌ **Cancel** - Abort this download",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=reply_markup
                 )
-                self.stats['failed_downloads'] += 1
+                # Don't increment failed downloads yet - user might choose an option
                 return
 
             # Update message for upload
@@ -405,7 +483,13 @@ Need more help? Contact @YourSupportUsername
     async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle inline keyboard callbacks"""
         query = update.callback_query
-        await query.answer()
+
+        # Answer callback query with error handling for event loop issues
+        try:
+            await query.answer()
+        except Exception as e:
+            logger.warning(f"Failed to answer callback query: {e}")
+            # Continue processing even if answer fails
 
         if query.data == "help_link":
             help_message = """
@@ -491,6 +575,437 @@ Quality is automatically selected based on the original video quality.
                 reply_markup=reply_markup
             )
 
+        elif query.data == "quality_hd":
+            # Store user preference
+            user_id = query.from_user.id
+            self.user_quality_preferences[user_id] = 'hd'
+
+            try:
+                await query.answer("✅ Auto HD quality selected!")
+            except Exception as e:
+                logger.warning(f"Failed to answer callback query: {e}")
+
+            quality_message = """
+⚙️ **Quality Settings**
+
+**Available Options:**
+🔥 **Auto HD** - Best quality available ✅
+📺 **Standard** - Good quality, faster download
+🎵 **Audio Only** - Extract MP3 (Coming soon)
+
+**Current Setting:** Auto HD ✅
+
+Your videos will now be downloaded in the highest quality available.
+            """
+
+            keyboard = [
+                [InlineKeyboardButton("🔥 Auto HD", callback_data="quality_hd")],
+                [InlineKeyboardButton("📺 Standard", callback_data="quality_standard")],
+                [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="back_main")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await query.edit_message_text(
+                quality_message,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+
+        elif query.data == "quality_standard":
+            # Store user preference
+            user_id = query.from_user.id
+            self.user_quality_preferences[user_id] = 'standard'
+
+            try:
+                await query.answer("✅ Standard quality selected!")
+            except Exception as e:
+                logger.warning(f"Failed to answer callback query: {e}")
+
+            quality_message = """
+⚙️ **Quality Settings**
+
+**Available Options:**
+🔥 **Auto HD** - Best quality available
+📺 **Standard** - Good quality, faster download ✅
+🎵 **Audio Only** - Extract MP3 (Coming soon)
+
+**Current Setting:** Standard ✅
+
+Your videos will now be downloaded in standard quality for faster downloads and smaller file sizes.
+            """
+
+            keyboard = [
+                [InlineKeyboardButton("🔥 Auto HD", callback_data="quality_hd")],
+                [InlineKeyboardButton("📺 Standard", callback_data="quality_standard")],
+                [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="back_main")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await query.edit_message_text(
+                quality_message,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+
+        elif query.data == "large_file_link":
+            # User wants the video via channel storage
+            user_id = query.from_user.id
+
+            try:
+                await query.answer("📤 Uploading to storage...")
+            except Exception as e:
+                logger.warning(f"Failed to answer callback query: {e}")
+
+            if user_id not in self.pending_large_files:
+                await query.edit_message_text(
+                    "❌ **Session Expired**\n\n"
+                    "This request has expired. Please send the TikTok link again.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+
+            pending = self.pending_large_files[user_id]
+            result = pending.get('result')
+
+            # Check if storage channel is configured
+            if not self.storage_channel_id:
+                await query.edit_message_text(
+                    "❌ **Storage Not Configured**\n\n"
+                    "Channel storage is not set up. Please contact the bot administrator.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                self.stats['failed_downloads'] += 1
+                del self.pending_large_files[user_id]
+                return
+
+            # Get video data from pending request
+            # We need to download it first
+            await query.edit_message_text(
+                "📥 **Downloading Video...**\n\n"
+                "Please wait, this may take a moment for large files...",
+                parse_mode=ParseMode.MARKDOWN
+            )
+
+            # Download the video
+            original_url = pending.get('url')
+            quality = pending.get('quality', 'hd')
+
+            download_result = await download_tiktok_video(original_url, quality=quality)
+
+            if not download_result.get('success'):
+                await query.edit_message_text(
+                    "❌ **Download Failed**\n\n"
+                    "Could not download the video. Please try again.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                self.stats['failed_downloads'] += 1
+                del self.pending_large_files[user_id]
+                return
+
+            video_data = download_result.get('video_data')
+            if not video_data:
+                await query.edit_message_text(
+                    "❌ **Error**\n\n"
+                    "Could not retrieve video data. Please try again.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                self.stats['failed_downloads'] += 1
+                del self.pending_large_files[user_id]
+                return
+
+            file_size = len(video_data)
+
+            # Check if file is too large even for channel storage
+            if file_size > self.max_channel_file_size:
+                await query.edit_message_text(
+                    f"❌ **File Too Large**\n\n"
+                    f"📊 Video size: **{file_size / (1024*1024):.1f}MB**\n"
+                    f"� Maximum allowed: **{self.max_channel_file_size / (1024*1024):.0f}MB**\n\n"
+                    f"This video exceeds even our extended storage limit.\n"
+                    f"Please try a shorter video or standard quality.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                self.stats['failed_downloads'] += 1
+                del self.pending_large_files[user_id]
+                return
+
+            # Update status
+            await query.edit_message_text(
+                "☁️ **Uploading to Storage...**\n\n"
+                f"� Size: {file_size / (1024*1024):.1f}MB\n"
+                "⏳ This may take a few moments...",
+                parse_mode=ParseMode.MARKDOWN
+            )
+
+            # Create temporary file for upload
+            with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
+                temp_file.write(video_data)
+                temp_file_path = temp_file.name
+
+            try:
+                # Upload to storage channel with retry logic
+                max_retries = 3
+                retry_delay = 5
+                channel_message = None
+
+                for attempt in range(max_retries):
+                    try:
+                        with open(temp_file_path, 'rb') as video_file:
+                            if attempt > 0:
+                                await query.edit_message_text(
+                                    f"☁️ **Uploading to Storage...**\n\n"
+                                    f"📊 Size: {file_size / (1024*1024):.1f}MB\n"
+                                    f"🔄 Retry attempt {attempt + 1}/{max_retries}\n"
+                                    "⏳ Please wait...",
+                                    parse_mode=ParseMode.MARKDOWN
+                                )
+
+                            channel_message = await context.bot.send_video(
+                                chat_id=self.storage_channel_id,
+                                video=video_file,
+                                caption=f"🎬 {result.get('title', 'TikTok Video')[:100]}\n"
+                                        f"👤 @{result.get('author', 'Unknown')}\n"
+                                        f"📊 {file_size / (1024*1024):.1f}MB\n"
+                                        f"🔑 User: {user_id}",
+                                supports_streaming=True,
+                                connect_timeout=60,
+                                pool_timeout=60,
+                                read_timeout=600,  # 10 minutes for large files
+                                write_timeout=600
+                            )
+                        break  # Success, exit retry loop
+
+                    except Exception as retry_error:
+                        logger.warning(f"Upload attempt {attempt + 1} failed: {retry_error}")
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(retry_delay)
+                        else:
+                            raise  # Re-raise on final attempt
+
+                if not channel_message:
+                    raise Exception("Failed to upload after all retries")
+
+                # Get the file_id from the uploaded video
+                file_id = channel_message.video.file_id
+
+                logger.info(f"Uploaded large file to channel for user {user_id}, file_id: {file_id}")
+
+                # Now send the video to the user using the file_id
+                await query.edit_message_text(
+                    "📤 **Sending Video...**\n\n"
+                    "Almost done!",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+
+                caption = (
+                    f"🎬 TikTok Video Downloaded\n\n"
+                    f"📝 Title: {result.get('title', 'TikTok Video')[:100]}\n"
+                    f"� Author: @{result.get('author', 'Unknown')}\n"
+                    f"🎯 Quality: {result.get('quality', 'HD')}\n"
+                    f"📱 Size: {file_size / (1024*1024):.1f}MB\n\n"
+                    f"✨ Downloaded without watermark via cloud storage!\n\n"
+                    f"🤖 @tikdownload98_bot"
+                )
+
+                # Send video to user using file_id (no re-upload needed!)
+                await context.bot.send_video(
+                    chat_id=query.message.chat_id,
+                    video=file_id,
+                    caption=caption,
+                    supports_streaming=True
+                )
+
+                # Delete the status message
+                await query.message.delete()
+
+                # Clean up and update stats
+                del self.pending_large_files[user_id]
+                self.stats['successful_downloads'] += 1
+                logger.info(f"Successfully sent large file via channel storage to user {user_id}")
+
+            except Exception as e:
+                await query.edit_message_text(
+                    f"❌ **Upload Failed**\n\n"
+                    f"Error: {str(e)[:100]}\n\n"
+                    "Please try again later or contact support.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                self.stats['failed_downloads'] += 1
+                logger.error(f"Channel upload error: {e}")
+                if user_id in self.pending_large_files:
+                    del self.pending_large_files[user_id]
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_file_path)
+                except:
+                    pass
+
+        elif query.data == "large_file_standard":
+            # User wants to try standard quality
+            user_id = query.from_user.id
+
+            try:
+                await query.answer("📺 Switching to standard quality...")
+            except Exception as e:
+                logger.warning(f"Failed to answer callback query: {e}")
+
+            if user_id not in self.pending_large_files:
+                await query.edit_message_text(
+                    "❌ **Session Expired**\n\n"
+                    "This request has expired. Please send the TikTok link again.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+
+            pending = self.pending_large_files[user_id]
+            original_url = pending.get('url')
+            current_quality = pending.get('quality')
+
+            # Check if already tried standard
+            if current_quality == 'standard':
+                await query.edit_message_text(
+                    "❌ **Already Standard Quality**\n\n"
+                    "This video is already in standard quality and still exceeds 50MB.\n\n"
+                    "Please use the **Get Storage Link** option instead, or try a different video.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                del self.pending_large_files[user_id]
+                self.stats['failed_downloads'] += 1
+                return
+
+            # Clean up pending request
+            del self.pending_large_files[user_id]
+
+            # Show processing message
+            await query.edit_message_text(
+                "🔄 **Processing your request...**\n\n"
+                "📥 Downloading standard quality video...",
+                parse_mode=ParseMode.MARKDOWN
+            )
+
+            # Try downloading in standard quality
+            result = await download_tiktok_video(original_url, quality='standard')
+
+            if not result.get('success'):
+                error_message = result.get('error', 'Unknown error occurred')
+                await query.edit_message_text(
+                    f"❌ **Download Failed**\n\n"
+                    f"Error: {error_message}\n\n"
+                    "Please try again or use the storage link option.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                self.stats['failed_downloads'] += 1
+                return
+
+            video_data = result.get('video_data')
+            if not video_data:
+                await query.edit_message_text(
+                    "❌ **Download Failed**\n\n"
+                    "Could not retrieve video data. Please try again.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                self.stats['failed_downloads'] += 1
+                return
+
+            file_size = len(video_data)
+
+            # Check if still too large
+            if file_size > self.max_file_size:
+                # Store again for link option
+                self.pending_large_files[user_id] = {
+                    'url': original_url,
+                    'video_url': result.get('video_url'),
+                    'result': result,
+                    'quality': 'standard'
+                }
+
+                keyboard = [
+                    [InlineKeyboardButton("☁️ Get via Cloud Storage", callback_data="large_file_link")],
+                    [InlineKeyboardButton("❌ Cancel", callback_data="large_file_cancel")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                await query.edit_message_text(
+                    f"⚠️ **Still Too Large**\n\n"
+                    f"📊 Standard quality size: **{file_size / (1024*1024):.1f}MB**\n"
+                    f"📱 Telegram limit: **{self.max_file_size / (1024*1024):.0f}MB**\n\n"
+                    f"Even the standard quality version exceeds Telegram's limit.\n\n"
+                    f"**Would you like to get it via cloud storage instead?**",
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=reply_markup
+                )
+                return
+
+            # File is small enough, upload it
+            await query.edit_message_text(
+                "🔄 **Processing your request...**\n\n"
+                "📤 Uploading your video...",
+                parse_mode=ParseMode.MARKDOWN
+            )
+
+            # Create temporary file and upload
+            with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
+                temp_file.write(video_data)
+                temp_file_path = temp_file.name
+
+            try:
+                caption = (
+                    f"🎬 TikTok Video Downloaded\n\n"
+                    f"📝 Title: {result.get('title', 'TikTok Video')[:100]}\n"
+                    f"👤 Author: @{result.get('author', 'Unknown')}\n"
+                    f"🎯 Quality: Standard\n"
+                    f"📱 Size: {file_size / (1024*1024):.1f}MB\n\n"
+                    f"✨ Downloaded without watermark!\n\n"
+                    f"🤖 @tikdownload98_bot"
+                )
+
+                with open(temp_file_path, 'rb') as video_file:
+                    await context.bot.send_video(
+                        chat_id=query.message.chat_id,
+                        video=video_file,
+                        caption=caption,
+                        supports_streaming=True
+                    )
+
+                await query.message.delete()
+                self.stats['successful_downloads'] += 1
+                logger.info(f"Successfully uploaded standard quality for user {user_id}")
+
+            except Exception as e:
+                await query.edit_message_text(
+                    f"❌ **Upload Failed**\n\n"
+                    f"Error: {str(e)[:100]}\n\n"
+                    "Please try again later.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                self.stats['failed_downloads'] += 1
+                logger.error(f"Upload error: {e}")
+            finally:
+                try:
+                    os.unlink(temp_file_path)
+                except:
+                    pass
+
+        elif query.data == "large_file_cancel":
+            # User cancelled the request
+            user_id = query.from_user.id
+
+            try:
+                await query.answer("❌ Download cancelled")
+            except Exception as e:
+                logger.warning(f"Failed to answer callback query: {e}")
+
+            if user_id in self.pending_large_files:
+                del self.pending_large_files[user_id]
+
+            await query.edit_message_text(
+                "❌ **Download Cancelled**\n\n"
+                "Feel free to send another TikTok link whenever you're ready! 🎬",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            self.stats['failed_downloads'] += 1
+
         elif query.data == "back_main":
             # Recreate start message
             user = query.from_user
@@ -566,6 +1081,7 @@ Ready to download? Just send me a TikTok link! 🚀
         app.add_handler(CommandHandler("start", self.start_command))
         app.add_handler(CommandHandler("help", self.help_command))
         app.add_handler(CommandHandler("stats", self.stats_command))
+        app.add_handler(CommandHandler("quality", self.quality_command))
         app.add_handler(CallbackQueryHandler(self.handle_callback_query))
 
         # Handle TikTok URLs
@@ -684,21 +1200,7 @@ Ready to download? Just send me a TikTok link! 🚀
         """Run bot in polling mode for development"""
         logger.info("🔄 Starting polling mode...")
         try:
-            # Create fresh event loop for polling
-            import asyncio
-
-            # Close any existing loop
-            try:
-                existing_loop = asyncio.get_event_loop()
-                if not existing_loop.is_closed():
-                    existing_loop.close()
-            except RuntimeError:
-                pass  # No loop exists
-
-            # Create and set new event loop
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-
+            # Don't manipulate event loops - let the telegram bot handle it
             app.run_polling(
                 drop_pending_updates=True,
                 allowed_updates=Update.ALL_TYPES

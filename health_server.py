@@ -99,29 +99,22 @@ def webhook(token):
                 update = Update.de_json(update_json, telegram_app.bot)
                 logger.info(f"Processing Telegram update: {update.update_id}")
 
-                # Process update in a background thread with a persistent event loop
-                def process_in_thread():
-                    """Process update in a thread with its own event loop"""
+                # Use asyncio.run in thread to avoid event loop conflicts
+                def process_update_safely():
+                    """Process update in a clean asyncio context"""
                     try:
-                        # Check if this thread already has an event loop
-                        try:
-                            loop = asyncio.get_event_loop()
-                            if loop.is_closed():
-                                raise RuntimeError("Loop is closed")
-                        except RuntimeError:
-                            # Create a new event loop for this thread
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
+                        # Use asyncio.run to create a fresh context
+                        # This avoids event loop binding issues
+                        async def process_async():
+                            await telegram_app.process_update(update)
 
-                        # Process the update - DO NOT close the loop after
-                        # The loop needs to stay alive for the bot's HTTP client
-                        loop.run_until_complete(telegram_app.process_update(update))
+                        asyncio.run(process_async())
 
                     except Exception as e:
                         logger.error(f"Error processing update: {e}", exc_info=True)
 
                 # Start processing in a daemon thread
-                threading.Thread(target=process_in_thread, daemon=True).start()
+                threading.Thread(target=process_update_safely, daemon=True).start()
 
                 return jsonify(status='ok'), 200
 

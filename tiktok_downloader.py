@@ -94,8 +94,8 @@ class TikTokDownloader:
         parsed_url = urlparse(url)
         return any(domain in parsed_url.netloc for domain in tiktok_domains)
 
-    async def download_with_tikwm(self, url: str) -> Optional[Dict]:
-        """Download using tikwm.com API"""
+    async def download_with_tikwm(self, url: str, quality: str = 'hd') -> Optional[Dict]:
+        """Download using tikwm.com API with quality selection"""
         try:
             data = {
                 'url': url,
@@ -114,7 +114,7 @@ class TikTokDownloader:
                 'Referer': 'https://www.tikwm.com/'
             }
 
-            self.logger.info(f"TikWM API: Requesting video info for {url}")
+            self.logger.info(f"TikWM API: Requesting video info for {url} (quality: {quality})")
 
             async with self.session.post(
                 'https://www.tikwm.com/api/',
@@ -132,22 +132,29 @@ class TikTokDownloader:
                     if result.get('code') == 0 and result.get('data'):
                         data = result['data']
 
-                        # Get HD video URL (without watermark)
-                        video_url = data.get('hdplay') or data.get('play')
+                        # Select video URL based on quality preference
+                        if quality == 'standard' and data.get('play'):
+                            # Use standard quality (SD)
+                            video_url = data.get('play')
+                            selected_quality = 'Standard'
+                        else:
+                            # Use HD quality (default) or fallback to SD
+                            video_url = data.get('hdplay') or data.get('play')
+                            selected_quality = 'HD' if data.get('hdplay') else 'SD'
 
                         if video_url:
                             # Fix relative URLs by prepending the base URL
                             if video_url.startswith('/'):
                                 video_url = 'https://www.tikwm.com' + video_url
 
-                            self.logger.info(f"TikWM API: Got video URL: {video_url[:100]}...")
+                            self.logger.info(f"TikWM API: Got {selected_quality} video URL: {video_url[:100]}...")
                             return {
                                 'success': True,
                                 'video_url': video_url,
                                 'title': data.get('title', 'TikTok Video'),
                                 'author': data.get('author', {}).get('nickname', 'Unknown'),
                                 'duration': data.get('duration', 0),
-                                'quality': 'HD' if data.get('hdplay') else 'SD',
+                                'quality': selected_quality,
                                 'thumbnail': data.get('cover'),
                                 'source': 'tikwm'
                             }
@@ -165,7 +172,7 @@ class TikTokDownloader:
 
         return None
 
-    async def download_with_tikdownloader_io(self, url: str) -> Optional[Dict]:
+    async def download_with_tikdownloader_io(self, url: str, quality: str = 'hd') -> Optional[Dict]:
         """Download using tikdownloader.io API (High Quality)"""
         try:
             search_url = "https://tikdownloader.io/api/ajaxSearch"
@@ -258,7 +265,7 @@ class TikTokDownloader:
             self.logger.error(f"TikDownloader.io parsing error: {e}")
             return None
 
-    async def download_with_musicaldown(self, url: str) -> Optional[Dict]:
+    async def download_with_musicaldown(self, url: str, quality: str = 'hd') -> Optional[Dict]:
         """Download using musicaldown.com API"""
         try:
             data = {
@@ -294,7 +301,150 @@ class TikTokDownloader:
 
         return None
 
-    async def download_with_fallback_scraping(self, url: str) -> Optional[Dict]:
+    async def download_with_ssstik(self, url: str, quality: str = 'hd') -> Optional[Dict]:
+        """Download using ssstik.io API"""
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json, text/plain, */*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'Origin': 'https://ssstik.io',
+                'Referer': 'https://ssstik.io/en'
+            }
+
+            data = {
+                'id': url,
+                'locale': 'en',
+                'tt': 'aSBkb3du'  # Base64 encoded token
+            }
+
+            self.logger.info(f"SSSTik API: Requesting video info for {url}")
+
+            async with self.session.post(
+                'https://ssstik.io/abc?url=dl',
+                data=data,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+
+                self.logger.info(f"SSSTik API response status: {response.status}")
+
+                if response.status == 200:
+                    html = await response.text()
+
+                    # Extract download link from HTML response
+                    # SSSTik returns HTML with download links
+                    video_url_match = re.search(r'<a[^>]*href="([^"]+)"[^>]*>.*?without watermark', html, re.IGNORECASE | re.DOTALL)
+                    if not video_url_match:
+                        # Try alternative pattern
+                        video_url_match = re.search(r'<a[^>]*class="[^"]*without_watermark[^"]*"[^>]*href="([^"]+)"', html, re.IGNORECASE)
+
+                    if video_url_match:
+                        video_url = video_url_match.group(1)
+
+                        # Extract title
+                        title_match = re.search(r'<p[^>]*class="[^"]*maintext[^"]*"[^>]*>([^<]+)', html)
+                        title = title_match.group(1).strip() if title_match else 'TikTok Video'
+
+                        # Extract author
+                        author_match = re.search(r'<h2>([^<]+)</h2>', html)
+                        author = author_match.group(1).strip() if author_match else 'Unknown'
+
+                        self.logger.info(f"SSSTik API: Got video URL: {video_url[:100]}...")
+
+                        return {
+                            'success': True,
+                            'video_url': video_url,
+                            'title': title,
+                            'author': author,
+                            'quality': 'HD',
+                            'source': 'ssstik'
+                        }
+                    else:
+                        self.logger.error("SSSTik API: No video URL found in response")
+                else:
+                    response_text = await response.text()
+                    self.logger.error(f"SSSTik API HTTP error {response.status}: {response_text[:200]}")
+
+        except Exception as e:
+            self.logger.error(f"SSSTik API error: {e}")
+            self.logger.exception("Full exception:")
+
+        return None
+
+    async def download_with_tikwm_original(self, url: str, quality: str = 'hd') -> Optional[Dict]:
+        """Download using TikWM's original downloader (originalDownloader.html)"""
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json, text/plain, */*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'Origin': 'https://www.tikwm.com',
+                'Referer': 'https://www.tikwm.com/originalDownloader.html'
+            }
+
+            data = {
+                'url': url,
+                'count': 12,
+                'cursor': 0,
+                'web': 1,
+                'hd': 1
+            }
+
+            self.logger.info(f"TikWM Original Downloader: Requesting video info for {url}")
+
+            async with self.session.post(
+                'https://www.tikwm.com/api/',
+                data=data,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+
+                self.logger.info(f"TikWM Original response status: {response.status}")
+
+                if response.status == 200:
+                    result = await response.json()
+
+                    if result.get('code') == 0 and result.get('data'):
+                        data = result['data']
+
+                        # Get the original download link (wmplay = watermark play, play = without watermark)
+                        video_url = data.get('wmplay') or data.get('play')
+
+                        if video_url:
+                            # Fix relative URLs
+                            if video_url.startswith('/'):
+                                video_url = 'https://www.tikwm.com' + video_url
+
+                            self.logger.info(f"TikWM Original: Got video URL: {video_url[:100]}...")
+
+                            return {
+                                'success': True,
+                                'video_url': video_url,
+                                'title': data.get('title', 'TikTok Video'),
+                                'author': data.get('author', {}).get('nickname', 'Unknown'),
+                                'duration': data.get('duration', 0),
+                                'quality': 'HD',
+                                'thumbnail': data.get('cover'),
+                                'source': 'tikwm_original'
+                            }
+                        else:
+                            self.logger.error("TikWM Original: No video URL in response")
+                    else:
+                        self.logger.error(f"TikWM Original error: code={result.get('code')}, msg={result.get('msg')}")
+                else:
+                    response_text = await response.text()
+                    self.logger.error(f"TikWM Original HTTP error {response.status}: {response_text[:200]}")
+
+        except Exception as e:
+            self.logger.error(f"TikWM Original error: {e}")
+            self.logger.exception("Full exception:")
+
+        return None
+
+    async def download_with_fallback_scraping(self, url: str, quality: str = 'hd') -> Optional[Dict]:
         """Fallback method using direct scraping"""
         try:
             async with self.session.get(url) as response:
@@ -393,10 +543,14 @@ class TikTokDownloader:
 
         return None
 
-    async def get_video_info(self, url: str) -> Optional[Dict]:
+    async def get_video_info(self, url: str, quality: str = 'hd') -> Optional[Dict]:
         """
         Main method to get video information and download URL
         Tries multiple APIs for reliability
+
+        Args:
+            url: TikTok video URL
+            quality: 'hd' for highest quality, 'standard' for lower quality
         """
         if not self.validate_tiktok_url(url):
             return {
@@ -411,19 +565,33 @@ class TikTokDownloader:
                 'error': 'Could not extract video ID from URL'
             }
 
-        # Try each API endpoint (ordered by quality preference)
-        methods = [
-            self.download_with_tikdownloader_io,  # Highest quality
-            self.download_with_tikwm,
-            self.download_with_musicaldown,
-            self.download_with_fallback_scraping
-        ]
+        # Choose API methods based on quality preference
+        if quality == 'hd':
+            # For HD: prioritize tikdownloader.io, fallback to TikWM original downloader
+            methods = [
+                self.download_with_tikdownloader_io,  # Best HD quality
+                self.download_with_tikwm_original,    # Fallback with original downloader
+                self.download_with_ssstik,            # Alternative HD source
+                self.download_with_musicaldown,
+                self.download_with_fallback_scraping
+            ]
+            self.logger.info("Using HD quality priority: tikdownloader.io → tikwm_original")
+        else:
+            # For Standard: use ssstik.io, fallback to TikWM original
+            methods = [
+                self.download_with_ssstik,            # Good for standard quality
+                self.download_with_tikwm_original,    # Fallback with original downloader
+                self.download_with_tikdownloader_io,  # Always returns HD but reliable
+                self.download_with_musicaldown,
+                self.download_with_fallback_scraping
+            ]
+            self.logger.info("Using Standard quality priority: ssstik.io → tikwm_original")
 
         for method in methods:
             try:
-                result = await method(url)
+                result = await method(url, quality=quality)
                 if result and result.get('success'):
-                    self.logger.info(f"Successfully got video info using {result.get('source', 'unknown')} method")
+                    self.logger.info(f"Successfully got video info using {result.get('source', 'unknown')} method (quality: {result.get('quality', 'unknown')})")
                     return result
             except Exception as e:
                 self.logger.error(f"Method {method.__name__} failed: {e}")
@@ -441,39 +609,86 @@ class TikTokDownloader:
             return None
 
         try:
-            # Try different headers for video download
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': '*/*',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Origin': 'https://www.tikwm.com',
-                'Referer': 'https://www.tikwm.com/',
-                'Sec-Fetch-Dest': 'video',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Site': 'cross-site'
-            }
+            # Check if URL is from TikWM and needs special handling
+            is_tikwm = 'tikwm.com' in video_url
 
-            self.logger.info(f"Attempting to download video from: {video_url[:100]}...")
+            # Ensure absolute URL
+            if video_url.startswith('/'):
+                video_url = 'https://www.tikwm.com' + video_url
+                is_tikwm = True
 
-            # Follow redirects and download
+            # Set headers based on source
+            if is_tikwm:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': '*/*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Referer': 'https://www.tikwm.com/',
+                    'Origin': 'https://www.tikwm.com',
+                    'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                    'Sec-Ch-Ua-Mobile': '?0',
+                    'Sec-Ch-Ua-Platform': '"Windows"',
+                    'Sec-Fetch-Dest': 'empty',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Site': 'same-origin'
+                }
+            else:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': '*/*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Referer': 'https://www.tiktok.com/',
+                }
+
+            self.logger.info(f"Attempting to download video from: {video_url[:100]}... (TikWM: {is_tikwm})")
+
+            # Follow redirects and download with extended timeout for large files
             async with self.session.get(
                 video_url,
                 headers=headers,
                 allow_redirects=True,
-                timeout=aiohttp.ClientTimeout(total=120)  # Increased timeout for larger files
+                timeout=aiohttp.ClientTimeout(
+                    total=600,  # 10 minutes total timeout
+                    connect=30,  # 30 seconds to connect
+                    sock_read=60  # 60 seconds to read each chunk
+                )
             ) as response:
 
                 self.logger.info(f"Video download response status: {response.status}")
-                self.logger.info(f"Response headers: {dict(response.headers)}")
+                content_length = response.headers.get('Content-Length')
+                if content_length:
+                    self.logger.info(f"Video size: {int(content_length) / (1024*1024):.1f}MB")
 
                 if response.status == 200:
-                    content = await response.read()
-                    if len(content) > 1000:  # Must be at least 1KB to be a valid video
-                        self.logger.info(f"Successfully downloaded video: {len(content)} bytes")
-                        return content
-                    else:
-                        self.logger.error(f"Downloaded content too small: {len(content)} bytes")
+                    # Download in chunks to avoid timeout on large files
+                    chunks = []
+                    downloaded = 0
+                    chunk_size = 1024 * 1024  # 1MB chunks
+
+                    try:
+                        async for chunk in response.content.iter_chunked(chunk_size):
+                            chunks.append(chunk)
+                            downloaded += len(chunk)
+
+                            # Log progress for large files (every 10MB)
+                            if downloaded % (10 * 1024 * 1024) < chunk_size:
+                                self.logger.info(f"Downloaded: {downloaded / (1024*1024):.1f}MB")
+
+                        content = b''.join(chunks)
+
+                        if len(content) > 1000:  # Must be at least 1KB to be a valid video
+                            self.logger.info(f"Successfully downloaded video: {len(content)} bytes ({len(content)/(1024*1024):.1f}MB)")
+                            return content
+                        else:
+                            self.logger.error(f"Downloaded content too small: {len(content)} bytes")
+                            return None
+
+                    except asyncio.TimeoutError:
+                        self.logger.error(f"Timeout while downloading (got {downloaded / (1024*1024):.1f}MB so far)")
+                        return None
+                    except Exception as chunk_error:
+                        self.logger.error(f"Error during chunked download: {chunk_error}")
                         return None
                 elif response.status == 302 or response.status == 301:
                     # Handle redirects manually if needed
@@ -493,14 +708,18 @@ class TikTokDownloader:
         return None
 
 # Utility functions
-async def download_tiktok_video(url: str) -> Dict:
+async def download_tiktok_video(url: str, quality: str = 'hd') -> Dict:
     """
     Convenience function to download a TikTok video
     Returns video info and binary data
+
+    Args:
+        url: TikTok video URL
+        quality: 'hd' for highest quality, 'standard' for lower quality (faster)
     """
     async with TikTokDownloader() as downloader:
-        # Get video information
-        video_info = await downloader.get_video_info(url)
+        # Get video information with quality preference
+        video_info = await downloader.get_video_info(url, quality=quality)
 
         if not video_info.get('success'):
             return video_info

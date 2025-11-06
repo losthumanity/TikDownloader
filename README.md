@@ -10,7 +10,7 @@ A powerful Telegram bot that downloads TikTok videos in **ultra-high quality** w
 
 ## ✨ Features
 
-- 🏆 **Ultra HD Quality** - Up to **42MB+ files** with TikDownloader.io (13x larger than standard)
+- 🏆 **Ultra HD Quality** - Up to **50MB files** with TikDownloader.io (10x larger than standard)
 - ✅ **No Watermarks** - Clean videos without TikTok branding
 - � **Smart Fallback System** - Primary: TikDownloader.io → Backup: TikWM → Alternative: MusicalDown
 - 🎵 **Original Audio** - Maintains original audio quality
