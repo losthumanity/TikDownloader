@@ -680,7 +680,7 @@ Your videos will now be downloaded in standard quality for faster downloads and 
 
             # Check if we already have the video data (we should!)
             video_data = result.get('video_data')
-            
+
             if not video_data:
                 # Fallback: Download again if video_data is missing
                 await query.edit_message_text(
@@ -716,6 +716,42 @@ Your videos will now be downloaded in standard quality for faster downloads and 
 
             file_size = len(video_data)
 
+            # IMPORTANT: Telegram Bot API has a 50MB upload limit (not just sendVideo, but ALL uploads)
+            # For files >50MB, we need to provide a direct download link instead
+            # https://core.telegram.org/bots/api#sending-files
+            if file_size > 50 * 1024 * 1024:  # 50MB
+                # Provide direct download link instead of trying to upload
+                video_url = result.get('video_url') or pending.get('video_url')
+
+                if video_url:
+                    await query.edit_message_text(
+                        f"📥 **Download Link Ready**\n\n"
+                        f"📊 Video size: **{file_size / (1024*1024):.1f}MB**\n"
+                        f"⚠️ File is too large for Telegram Bot API (50MB limit)\n\n"
+                        f"**Download directly:**\n"
+                        f"🔗 [Click here to download]({video_url})\n\n"
+                        f"💡 **Tip:** After downloading, you can send it to Telegram from your device.\n\n"
+                        f"🎯 **Or try Standard Quality** for a smaller file that can be sent directly.",
+                        parse_mode=ParseMode.MARKDOWN,
+                        disable_web_page_preview=False
+                    )
+                    self.stats['successful_downloads'] += 1
+                    del self.pending_large_files[user_id]
+                    logger.info(f"Provided direct download link for {file_size / (1024*1024):.1f}MB file to user {user_id}")
+                    return
+                else:
+                    await query.edit_message_text(
+                        f"❌ **File Too Large**\n\n"
+                        f"📊 Video size: **{file_size / (1024*1024):.1f}MB**\n"
+                        f"🚫 Telegram Bot API limit: **50MB**\n\n"
+                        f"Unfortunately, the download link is not available.\n"
+                        f"Please try **Standard Quality** for a smaller file.",
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                    self.stats['failed_downloads'] += 1
+                    del self.pending_large_files[user_id]
+                    return
+
             # Check if file is too large even for channel storage
             if file_size > self.max_channel_file_size:
                 await query.edit_message_text(
@@ -742,6 +778,13 @@ Your videos will now be downloaded in standard quality for faster downloads and 
             with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
                 temp_file.write(video_data)
                 temp_file_path = temp_file.name
+
+            # CRITICAL: Delete video data from memory to free up RAM
+            # Large files (100MB+) can exceed memory limits on free hosting
+            del video_data
+            import gc
+            gc.collect()  # Force garbage collection
+            logger.info(f"Freed {file_size / (1024*1024):.1f}MB from memory after writing to disk")
 
             try:
                 # Upload to storage channel with retry logic
