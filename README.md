@@ -158,8 +158,6 @@ DEBUG=False
 ADMIN_CHAT_ID=your_telegram_user_id
 
 # Optional - for large files support (>50MB)
-# See STORAGE_SETUP.md for detailed instructions
-STORAGE_CHANNEL_ID=-1001234567890
 ```
 
 > 📦 **Large File Support:** To handle TikTok videos larger than 50MB (up to 400MB), you need to configure a storage channel. See [STORAGE_SETUP.md](STORAGE_SETUP.md) for complete setup instructions.

@@ -32,29 +32,29 @@ _bot_thread = None
 def start_bot_in_background():
     """Start the bot in a background thread with a persistent event loop"""
     global _bot_loop
-    
+
     def run_bot_loop():
         global _bot_loop
         # Create a new event loop for this thread
         _bot_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(_bot_loop)
-        
+
         try:
             logger.info("Starting bot initialization in background thread...")
             _bot_loop.run_until_complete(initialize_bot_for_production())
             logger.info("✅ Bot initialization complete. Event loop will stay alive.")
-            
+
             # Keep the loop running to handle webhook updates
             _bot_loop.run_forever()
         except Exception as e:
             logger.critical(f"🚨 Bot loop failed: {e}", exc_info=True)
         finally:
             _bot_loop.close()
-    
+
     # Start the bot thread
     _bot_thread = threading.Thread(target=run_bot_loop, daemon=True, name="BotEventLoop")
     _bot_thread.start()
-    
+
     # Wait for initialization to complete (give it a few seconds)
     import time
     timeout = 10
@@ -63,7 +63,7 @@ def start_bot_in_background():
         if time.time() - start_time > timeout:
             raise RuntimeError("Bot initialization timed out")
         time.sleep(0.1)
-    
+
     logger.info("✅ Bot thread started with persistent event loop")
 
 try:

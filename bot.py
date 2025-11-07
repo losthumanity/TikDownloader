@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 import tempfile
+import gc
 from typing import Optional
 from datetime import datetime
 import validators
@@ -305,49 +306,71 @@ Choose your preferred quality setting below:
                 logger.error(f"Download failed for {tiktok_url}: {error_message}")
                 return
 
-            # Check file size
+            # Get file size (either from HEAD request or actual download)
+            file_size = result.get('file_size', 0)
             video_data = result.get('video_data')
+
+            # If file_size was pre-checked and is >50MB, provide direct link immediately
+            # (video_data will be None because download was skipped to save bandwidth)
+            if file_size > 50 * 1024 * 1024 and result.get('size_checked'):
+                video_url = result.get('video_url')
+                await processing_message.edit_text(
+                    f"📥 **Download Link Ready**\n\n"
+                    f"📊 Video size: **{file_size / (1024*1024):.1f}MB**\n"
+                    f"⚠️ File is too large for Telegram Bot API (50MB limit)\n\n"
+                    f"**Download directly:**\n"
+                    f"🔗 [Click here to download]({video_url})\n\n"
+                    f"💡 **Tip:** After downloading, you can send it to Telegram from your device.\n\n"
+                    f"🎯 **Or try Standard Quality** for a smaller file.",
+                    parse_mode=ParseMode.MARKDOWN,
+                    disable_web_page_preview=False
+                )
+                self.stats['successful_downloads'] += 1
+                logger.info(f"Provided direct download link for {file_size / (1024*1024):.1f}MB file (bandwidth saved: {file_size / (1024*1024):.1f}MB)")
+                return
+
+            # Check if video data exists (should exist for files <=50MB)
             if not video_data:
+                # This shouldn't happen for small files, but handle gracefully
                 await processing_message.edit_text(
                     "❌ **Download Failed**\n\n"
                     "Could not retrieve video data. Please try again.",
                     parse_mode=ParseMode.MARKDOWN
                 )
                 self.stats['failed_downloads'] += 1
+                logger.error(f"No video data for {tiktok_url}, file_size: {file_size / (1024*1024) if file_size else 0:.1f}MB")
                 return
 
-            file_size = len(video_data)
+            # Update file size from actual download if not pre-checked
+            if not result.get('size_checked'):
+                file_size = len(video_data)
 
+            # Final check: if file is somehow still too large, provide direct link
+            # (This handles edge case where HEAD request failed but downloaded file is large)
             if file_size > self.max_file_size:
-                # Store the request for later if user wants the link
-                user_id = update.effective_user.id
-                self.pending_large_files[user_id] = {
-                    'url': tiktok_url,
-                    'video_url': result.get('video_url'),
-                    'result': result,
-                    'quality': user_quality
-                }
-
-                # Create inline keyboard with options
-                keyboard = [
-                    [InlineKeyboardButton("☁️ Get via Cloud Storage", callback_data="large_file_link")],
-                    [InlineKeyboardButton("📺 Try Standard Quality", callback_data="large_file_standard")],
-                    [InlineKeyboardButton("❌ Cancel", callback_data="large_file_cancel")]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
+                # File is too large - provide direct download link
+                video_url = result.get('video_url')
+                size_check_method = "pre-checked" if result.get('size_checked') else "downloaded"
 
                 await processing_message.edit_text(
-                    f"⚠️ **File Size Limit Exceeded**\n\n"
+                    f"📥 **Download Link Ready**\n\n"
                     f"📊 Video size: **{file_size / (1024*1024):.1f}MB**\n"
-                    f"📱 Telegram limit: **{self.max_file_size / (1024*1024):.0f}MB**\n\n"
-                    f"**What would you like to do?**\n\n"
-                    f"☁️ **Get via Cloud Storage** - Upload to cloud, receive video in chat\n"
-                    f"📺 **Try Standard Quality** - Download in lower quality (smaller file)\n"
-                    f"❌ **Cancel** - Abort this download",
+                    f"⚠️ File is too large for Telegram Bot API (50MB limit)\n\n"
+                    f"**Download directly:**\n"
+                    f"🔗 [Click here to download]({video_url})\n\n"
+                    f"💡 **Tip:** After downloading, you can send it to Telegram from your device.\n\n"
+                    f"🎯 **Or try Standard Quality** for a smaller file.",
                     parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=reply_markup
+                    disable_web_page_preview=False
                 )
-                # Don't increment failed downloads yet - user might choose an option
+                self.stats['successful_downloads'] += 1
+                logger.info(f"Provided direct download link for {file_size / (1024*1024):.1f}MB file ({size_check_method})")
+
+                # Clean up memory if we downloaded the file
+                if video_data:
+                    del video_data
+                    gc.collect()
+                    logger.info("Cleaned up video data memory for large file")
                 return
 
             # Update message for upload
@@ -367,6 +390,11 @@ Choose your preferred quality setting below:
             with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
                 temp_file.write(video_data)
                 temp_file_path = temp_file.name
+
+            # Clean up video_data from memory immediately after writing to disk
+            del video_data
+            gc.collect()
+            logger.info(f"Cleaned up {file_size / (1024*1024):.1f}MB video data from memory")
 
             try:
                 # Escape special characters for Markdown
@@ -395,15 +423,46 @@ Choose your preferred quality setting below:
                     f"🤖 @tikdownload98_bot"
                 )
 
-                # Send video without Markdown parsing
-                with open(temp_file_path, 'rb') as video_file:
-                    await context.bot.send_video(
-                        chat_id=update.effective_chat.id,
-                        video=video_file,
-                        caption=caption,
-                        supports_streaming=True,
-                        reply_to_message_id=message.message_id
-                    )
+                # Send video without Markdown parsing with retry logic
+                max_upload_retries = 3
+                upload_success = False
+                last_error = None
+                
+                for attempt in range(max_upload_retries):
+                    try:
+                        with open(temp_file_path, 'rb') as video_file:
+                            await context.bot.send_video(
+                                chat_id=update.effective_chat.id,
+                                video=video_file,
+                                caption=caption,
+                                supports_streaming=True,
+                                reply_to_message_id=message.message_id,
+                                read_timeout=300,  # 5 minutes for upload
+                                write_timeout=300,  # 5 minutes for upload
+                                connect_timeout=60  # 1 minute to connect
+                            )
+                        upload_success = True
+                        break  # Upload successful, exit retry loop
+                    except TimedOut as timeout_error:
+                        last_error = timeout_error
+                        logger.warning(f"Upload attempt {attempt + 1}/{max_upload_retries} timed out: {timeout_error}")
+                        if attempt < max_upload_retries - 1:
+                            # Wait before retrying
+                            await asyncio.sleep(2 * (attempt + 1))  # Exponential backoff
+                            await processing_message.edit_text(
+                                f"⏳ **Retrying upload...**\n\n"
+                                f"Attempt {attempt + 2}/{max_upload_retries}\n"
+                                f"Please wait...",
+                                parse_mode=ParseMode.MARKDOWN
+                            )
+                    except Exception as upload_error:
+                        # For non-timeout errors, fail immediately
+                        last_error = upload_error
+                        logger.error(f"Upload error on attempt {attempt + 1}: {upload_error}")
+                        break
+                
+                if not upload_success:
+                    raise last_error or Exception("Upload failed after all retries")
 
                 # Delete processing message
                 await processing_message.delete()
@@ -413,6 +472,18 @@ Choose your preferred quality setting below:
 
                 logger.info(f"Successfully processed video for user {user.id}: {result.get('title', 'Unknown')}")
 
+            except TimedOut as timeout_error:
+                # Special handling for timeout errors
+                await processing_message.edit_text(
+                    f"⏱️ **Upload Timeout**\n\n"
+                    f"The upload took too long to complete.\n\n"
+                    f"📹 **The video might still arrive** - Telegram may be processing it.\n"
+                    f"If it doesn't appear in 1-2 minutes, please try again.\n\n"
+                    f"💡 **Tip**: Try using Standard Quality for faster uploads.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                self.stats['failed_downloads'] += 1
+                logger.warning(f"Upload timeout for user {user.id}: {timeout_error}")
             except Exception as e:
                 await processing_message.edit_text(
                     f"❌ **Upload Failed**\n\n"

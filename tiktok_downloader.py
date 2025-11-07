@@ -707,6 +707,82 @@ class TikTokDownloader:
 
         return None
 
+    async def get_video_file_size(self, video_url: str) -> Optional[int]:
+        """Get video file size without downloading using HEAD request"""
+        if not video_url:
+            return None
+
+        try:
+            # Ensure absolute URL
+            if video_url.startswith('/'):
+                video_url = 'https://www.tikwm.com' + video_url
+
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': '*/*',
+                'Referer': 'https://www.tiktok.com/',
+            }
+
+            # Try HEAD request first (fastest, no download)
+            try:
+                async with self.session.head(
+                    video_url,
+                    headers=headers,
+                    allow_redirects=True,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        content_length = response.headers.get('Content-Length')
+                        if content_length:
+                            file_size = int(content_length)
+                            self.logger.info(f"Video size from HEAD request: {file_size / (1024*1024):.1f}MB")
+                            return file_size
+                        else:
+                            self.logger.debug("Content-Length header not available in HEAD response")
+                    else:
+                        self.logger.debug(f"HEAD request returned status: {response.status}")
+            except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+                self.logger.debug(f"HEAD request failed ({type(e).__name__}), trying Range request")
+
+            # Fallback: Try Range request (downloads only 1 byte to get Content-Range)
+            headers['Range'] = 'bytes=0-0'
+            async with self.session.get(
+                video_url,
+                headers=headers,
+                allow_redirects=True,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status in (200, 206):  # 206 = Partial Content
+                    # Try Content-Length first
+                    content_length = response.headers.get('Content-Length')
+                    if content_length and response.status == 200:
+                        file_size = int(content_length)
+                        self.logger.info(f"Video size from GET request: {file_size / (1024*1024):.1f}MB")
+                        return file_size
+                    
+                    # Try Content-Range header (format: "bytes 0-0/12345")
+                    content_range = response.headers.get('Content-Range')
+                    if content_range:
+                        # Parse: "bytes 0-0/12345" -> 12345
+                        parts = content_range.split('/')
+                        if len(parts) == 2 and parts[1].isdigit():
+                            file_size = int(parts[1])
+                            self.logger.info(f"Video size from Range request: {file_size / (1024*1024):.1f}MB")
+                            return file_size
+                    
+                    self.logger.debug(f"Could not determine size from response (status: {response.status})")
+                else:
+                    self.logger.debug(f"Range request failed with status: {response.status}")
+
+        except asyncio.TimeoutError:
+            self.logger.warning(f"File size check timeout (CDN may be slow)")
+        except aiohttp.ClientError as e:
+            self.logger.warning(f"File size check client error: {type(e).__name__}: {e}")
+        except Exception as e:
+            self.logger.warning(f"Error getting file size: {type(e).__name__}: {e}")
+
+        return None
+
 # Utility functions
 async def download_tiktok_video(url: str, quality: str = 'hd') -> Dict:
     """
@@ -724,12 +800,29 @@ async def download_tiktok_video(url: str, quality: str = 'hd') -> Dict:
         if not video_info.get('success'):
             return video_info
 
-        # Download the video file
+        # OPTIMIZATION: Check file size BEFORE downloading
+        # This avoids downloading large files only to reject them
+        file_size = await downloader.get_video_file_size(video_info['video_url'])
+        if file_size:
+            video_info['file_size'] = file_size
+            video_info['file_size_mb'] = file_size / (1024 * 1024)
+            video_info['size_checked'] = True
+
+            # Skip download if file is too large (>50MB Telegram limit)
+            # Return info without video_data so bot can provide direct link
+            if file_size > 50 * 1024 * 1024:
+                downloader.logger.info(f"File size {file_size / (1024*1024):.1f}MB exceeds 50MB limit, skipping download")
+                return video_info
+
+        # Download the video file (only if size check passed or wasn't available)
         video_data = await downloader.download_video_file(video_info['video_url'])
 
         if video_data:
             video_info['video_data'] = video_data
-            video_info['file_size'] = len(video_data)
+            # Update file size with actual downloaded size if HEAD request didn't work
+            if not file_size:
+                video_info['file_size'] = len(video_data)
+                video_info['file_size_mb'] = len(video_data) / (1024 * 1024)
             return video_info
         else:
             return {

@@ -104,7 +104,7 @@ def webhook(token):
                     bot_loop = None
                     if 'wsgi' in sys.modules and hasattr(sys.modules['wsgi'], 'get_bot_loop'):
                         bot_loop = sys.modules['wsgi'].get_bot_loop()
-                    
+
                     if bot_loop and not bot_loop.is_closed():
                         # Schedule the update processing in the bot's event loop
                         future = asyncio.run_coroutine_threadsafe(
@@ -118,7 +118,7 @@ def webhook(token):
                         # Fallback: Process in a new thread with its own loop
                         # This shouldn't normally happen in production
                         logger.warning("Bot loop not available, using fallback processing")
-                        
+
                         def process_update_safely():
                             try:
                                 loop = asyncio.new_event_loop()
@@ -137,9 +137,9 @@ def webhook(token):
                                     loop.close()
                             except Exception as e:
                                 logger.error(f"Error processing update: {e}", exc_info=True)
-                        
+
                         threading.Thread(target=process_update_safely, daemon=True).start()
-                
+
                 except Exception as processing_error:
                     logger.error(f"Error scheduling update: {processing_error}", exc_info=True)
 
