@@ -678,40 +678,41 @@ Your videos will now be downloaded in standard quality for faster downloads and 
                 del self.pending_large_files[user_id]
                 return
 
-            # Get video data from pending request
-            # We need to download it first
-            await query.edit_message_text(
-                "📥 **Downloading Video...**\n\n"
-                "Please wait, this may take a moment for large files...",
-                parse_mode=ParseMode.MARKDOWN
-            )
-
-            # Download the video
-            original_url = pending.get('url')
-            quality = pending.get('quality', 'hd')
-
-            download_result = await download_tiktok_video(original_url, quality=quality)
-
-            if not download_result.get('success'):
-                await query.edit_message_text(
-                    "❌ **Download Failed**\n\n"
-                    "Could not download the video. Please try again.",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                self.stats['failed_downloads'] += 1
-                del self.pending_large_files[user_id]
-                return
-
-            video_data = download_result.get('video_data')
+            # Check if we already have the video data (we should!)
+            video_data = result.get('video_data')
+            
             if not video_data:
+                # Fallback: Download again if video_data is missing
                 await query.edit_message_text(
-                    "❌ **Error**\n\n"
-                    "Could not retrieve video data. Please try again.",
+                    "📥 **Downloading Video...**\n\n"
+                    "Please wait, this may take a moment for large files...",
                     parse_mode=ParseMode.MARKDOWN
                 )
-                self.stats['failed_downloads'] += 1
-                del self.pending_large_files[user_id]
-                return
+
+                original_url = pending.get('url')
+                quality = pending.get('quality', 'hd')
+                download_result = await download_tiktok_video(original_url, quality=quality)
+
+                if not download_result.get('success'):
+                    await query.edit_message_text(
+                        "❌ **Download Failed**\n\n"
+                        "Could not download the video. Please try again.",
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                    self.stats['failed_downloads'] += 1
+                    del self.pending_large_files[user_id]
+                    return
+
+                video_data = download_result.get('video_data')
+                if not video_data:
+                    await query.edit_message_text(
+                        "❌ **Error**\n\n"
+                        "Could not retrieve video data. Please try again.",
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                    self.stats['failed_downloads'] += 1
+                    del self.pending_large_files[user_id]
+                    return
 
             file_size = len(video_data)
 
@@ -760,14 +761,16 @@ Your videos will now be downloaded in standard quality for faster downloads and 
                                     parse_mode=ParseMode.MARKDOWN
                                 )
 
-                            channel_message = await context.bot.send_video(
+                            # Use send_document for files >50MB (Telegram API limitation)
+                            # send_video has 50MB limit, send_document supports up to 2GB
+                            channel_message = await context.bot.send_document(
                                 chat_id=self.storage_channel_id,
-                                video=video_file,
+                                document=video_file,
                                 caption=f"🎬 {result.get('title', 'TikTok Video')[:100]}\n"
                                         f"👤 @{result.get('author', 'Unknown')}\n"
                                         f"📊 {file_size / (1024*1024):.1f}MB\n"
                                         f"🔑 User: {user_id}",
-                                supports_streaming=True,
+                                filename=f"tiktok_video_{user_id}.mp4",
                                 connect_timeout=60,
                                 pool_timeout=60,
                                 read_timeout=600,  # 10 minutes for large files
@@ -785,8 +788,8 @@ Your videos will now be downloaded in standard quality for faster downloads and 
                 if not channel_message:
                     raise Exception("Failed to upload after all retries")
 
-                # Get the file_id from the uploaded video
-                file_id = channel_message.video.file_id
+                # Get the file_id from the uploaded document
+                file_id = channel_message.document.file_id
 
                 logger.info(f"Uploaded large file to channel for user {user_id}, file_id: {file_id}")
 
@@ -808,11 +811,12 @@ Your videos will now be downloaded in standard quality for faster downloads and 
                 )
 
                 # Send video to user using file_id (no re-upload needed!)
-                await context.bot.send_video(
+                # Note: We use send_document because the file is >50MB
+                await context.bot.send_document(
                     chat_id=query.message.chat_id,
-                    video=file_id,
+                    document=file_id,
                     caption=caption,
-                    supports_streaming=True
+                    filename=f"{result.get('title', 'tiktok_video')[:50]}.mp4"
                 )
 
                 # Delete the status message

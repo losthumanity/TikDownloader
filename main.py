@@ -48,7 +48,7 @@ async def initialize_bot_for_production():
     request = HTTPXRequest(
         connection_pool_size=8,
         read_timeout=30,
-        write_timeout=60,  # Increased for large video uploads
+        write_timeout=60,
         connect_timeout=10,
         pool_timeout=5,
     )

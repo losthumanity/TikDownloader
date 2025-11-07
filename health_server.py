@@ -99,22 +99,50 @@ def webhook(token):
                 update = Update.de_json(update_json, telegram_app.bot)
                 logger.info(f"Processing Telegram update: {update.update_id}")
 
-                # Use asyncio.run in thread to avoid event loop conflicts
-                def process_update_safely():
-                    """Process update in a clean asyncio context"""
-                    try:
-                        # Use asyncio.run to create a fresh context
-                        # This avoids event loop binding issues
-                        async def process_async():
-                            await telegram_app.process_update(update)
-
-                        asyncio.run(process_async())
-
-                    except Exception as e:
-                        logger.error(f"Error processing update: {e}", exc_info=True)
-
-                # Start processing in a daemon thread
-                threading.Thread(target=process_update_safely, daemon=True).start()
+                # Get the bot's persistent event loop from wsgi module
+                try:
+                    import sys
+                    bot_loop = None
+                    if 'wsgi' in sys.modules and hasattr(sys.modules['wsgi'], 'get_bot_loop'):
+                        bot_loop = sys.modules['wsgi'].get_bot_loop()
+                    
+                    if bot_loop and not bot_loop.is_closed():
+                        # Schedule the update processing in the bot's event loop
+                        future = asyncio.run_coroutine_threadsafe(
+                            telegram_app.process_update(update),
+                            bot_loop
+                        )
+                        # Don't wait for completion - just schedule it
+                        # The result will be processed asynchronously
+                        logger.debug(f"Update {update.update_id} scheduled in bot's event loop")
+                    else:
+                        # Fallback: Process in a new thread with its own loop
+                        # This shouldn't normally happen in production
+                        logger.warning("Bot loop not available, using fallback processing")
+                        
+                        def process_update_safely():
+                            try:
+                                loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(loop)
+                                try:
+                                    loop.run_until_complete(telegram_app.process_update(update))
+                                    loop.run_until_complete(asyncio.sleep(0.1))
+                                finally:
+                                    try:
+                                        pending = asyncio.all_tasks(loop)
+                                        for task in pending:
+                                            task.cancel()
+                                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                                    except Exception:
+                                        pass
+                                    loop.close()
+                            except Exception as e:
+                                logger.error(f"Error processing update: {e}", exc_info=True)
+                        
+                        threading.Thread(target=process_update_safely, daemon=True).start()
+                
+                except Exception as processing_error:
+                    logger.error(f"Error scheduling update: {processing_error}", exc_info=True)
 
                 return jsonify(status='ok'), 200
 
