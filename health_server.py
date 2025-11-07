@@ -101,7 +101,6 @@ def webhook(token):
 
                 # Get the bot's persistent event loop from wsgi module
                 try:
-                    import sys
                     bot_loop = None
                     if 'wsgi' in sys.modules and hasattr(sys.modules['wsgi'], 'get_bot_loop'):
                         bot_loop = sys.modules['wsgi'].get_bot_loop()
