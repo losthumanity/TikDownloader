@@ -759,7 +759,7 @@ class TikTokDownloader:
                         file_size = int(content_length)
                         self.logger.info(f"Video size from GET request: {file_size / (1024*1024):.1f}MB")
                         return file_size
-                    
+
                     # Try Content-Range header (format: "bytes 0-0/12345")
                     content_range = response.headers.get('Content-Range')
                     if content_range:
@@ -769,7 +769,7 @@ class TikTokDownloader:
                             file_size = int(parts[1])
                             self.logger.info(f"Video size from Range request: {file_size / (1024*1024):.1f}MB")
                             return file_size
-                    
+
                     self.logger.debug(f"Could not determine size from response (status: {response.status})")
                 else:
                     self.logger.debug(f"Range request failed with status: {response.status}")
@@ -801,17 +801,17 @@ async def download_tiktok_video(url: str, quality: str = 'hd') -> Dict:
             return video_info
 
         # OPTIMIZATION: Check file size BEFORE downloading
-        # This avoids downloading large files only to reject them
+        # This avoids downloading files larger than Telegram's MTProto 2GB limit
         file_size = await downloader.get_video_file_size(video_info['video_url'])
         if file_size:
             video_info['file_size'] = file_size
             video_info['file_size_mb'] = file_size / (1024 * 1024)
             video_info['size_checked'] = True
 
-            # Skip download if file is too large (>50MB Telegram limit)
+            # Skip download if file is too large (>2000MB Telegram MTProto limit)
             # Return info without video_data so bot can provide direct link
-            if file_size > 50 * 1024 * 1024:
-                downloader.logger.info(f"File size {file_size / (1024*1024):.1f}MB exceeds 50MB limit, skipping download")
+            if file_size > 2000 * 1024 * 1024:
+                downloader.logger.info(f"File size {file_size / (1024*1024):.1f}MB exceeds 2000MB limit, skipping download")
                 return video_info
 
         # Download the video file (only if size check passed or wasn't available)

@@ -84,3 +84,7 @@ logs/
 # Downloaded videos (temporary)
 downloads/
 temp/
+
+# Pyrogram session files
+*.session
+*.session-journal
