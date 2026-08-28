@@ -458,13 +458,41 @@ class TikTokBot:
             user_quality = self.user_quality_preferences.get(user_id, 'hd')
             quality_text = "HD" if user_quality == 'hd' else "Standard"
 
-            await processing_message.edit_text(
-                f"🔄 **Processing your request...**\n\n"
-                f"📥 Downloading {quality_text} video...",
-                parse_mode=ParseMode.MARKDOWN
-            )
+            # Throttled download progress callback
+            last_dl_progress_time = [0.0]
 
-            result = await download_tiktok_video(tiktok_url, quality=user_quality)
+            async def download_progress(downloaded: int, total: int):
+                now = time.time()
+                if now - last_dl_progress_time[0] >= 3.0:
+                    last_dl_progress_time[0] = now
+                    if total > 0:
+                        percent = (downloaded / max(total, 1)) * 100
+                        mb_curr = downloaded / (1024 * 1024)
+                        mb_tot = total / (1024 * 1024)
+                        text = (
+                            f"🔄 **Processing your request...**\n\n"
+                            f"📥 Downloading {quality_text} video...\n"
+                            f"📊 Progress: `{mb_curr:.1f}MB` / `{mb_tot:.1f}MB` ({percent:.1f}%)\n"
+                            f"⏳ Please wait..."
+                        )
+                    else:
+                        mb_curr = downloaded / (1024 * 1024)
+                        text = (
+                            f"🔄 **Processing your request...**\n\n"
+                            f"📥 Downloading {quality_text} video...\n"
+                            f"📊 Downloaded: `{mb_curr:.1f}MB`\n"
+                            f"⏳ Please wait..."
+                        )
+                    try:
+                        await processing_message.edit_text(text, parse_mode=ParseMode.MARKDOWN)
+                    except Exception:
+                        pass
+
+            result = await download_tiktok_video(
+                tiktok_url,
+                quality=user_quality,
+                progress_callback=download_progress
+            )
 
             if not result.get('success'):
                 error_message = result.get('error', 'Unknown error occurred')
@@ -479,7 +507,7 @@ class TikTokBot:
                 return
 
             file_size = result.get('file_size', 0)
-            video_data = result.get('video_data')
+            temp_file_path = result.get('file_path')
 
             # Check if file size exceeds MTProto 2GB limit
             if file_size > self.max_file_size:
@@ -497,26 +525,14 @@ class TikTokBot:
                 self.stats['successful_downloads'] += 1
                 return
 
-            if not video_data:
+            if not temp_file_path or not os.path.exists(temp_file_path):
                 await processing_message.edit_text(
                     "❌ **Download Failed**\n\n"
-                    "Could not retrieve video data. Please try again.",
+                    "Could not retrieve video file. Please try again.",
                     parse_mode=ParseMode.MARKDOWN
                 )
                 self.stats['failed_downloads'] += 1
                 return
-
-            file_size = len(video_data)
-
-            # Write to disk to allow Pyrogram streaming upload without holding all RAM
-            with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
-                temp_file.write(video_data)
-                temp_file_path = temp_file.name
-
-            # Immediately free RAM memory
-            del video_data
-            gc.collect()
-            logger.info(f"Saved {file_size / (1024*1024):.1f}MB to {temp_file_path} and freed RAM")
 
             await processing_message.edit_text(
                 f"🔄 **Processing your request...**\n\n"
@@ -537,12 +553,12 @@ class TikTokBot:
             )
 
             # Real-time progress callback for large video uploads
-            last_progress_time = [0.0]
+            last_up_progress_time = [0.0]
 
             async def upload_progress(current, total):
                 now = time.time()
-                if now - last_progress_time[0] >= 3.0:
-                    last_progress_time[0] = now
+                if now - last_up_progress_time[0] >= 3.0:
+                    last_up_progress_time[0] = now
                     percent = (current / max(total, 1)) * 100
                     mb_current = current / (1024 * 1024)
                     mb_total = total / (1024 * 1024)

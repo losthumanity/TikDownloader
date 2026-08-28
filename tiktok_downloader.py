@@ -1,3 +1,5 @@
+import os
+import tempfile
 import aiohttp
 import asyncio
 import re
@@ -602,8 +604,16 @@ class TikTokDownloader:
             'error': 'All download methods failed. The video might be private or unavailable.'
         }
 
-    async def download_video_file(self, video_url: str) -> Optional[bytes]:
-        """Download the actual video file with improved error handling"""
+    async def download_video_file(
+        self,
+        video_url: str,
+        dest_path: Optional[str] = None,
+        progress_callback = None
+    ) -> Optional[str]:
+        """
+        Download the actual video file directly to disk in chunks to prevent OOM errors.
+        Returns the local file path on success, or None on failure.
+        """
         if not video_url:
             self.logger.error("No video URL provided")
             return None
@@ -643,6 +653,11 @@ class TikTokDownloader:
 
             self.logger.info(f"Attempting to download video from: {video_url[:100]}... (TikWM: {is_tikwm})")
 
+            if not dest_path:
+                temp_file = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+                dest_path = temp_file.name
+                temp_file.close()
+
             # Follow redirects and download with extended timeout for large files
             async with self.session.get(
                 video_url,
@@ -657,45 +672,54 @@ class TikTokDownloader:
 
                 self.logger.info(f"Video download response status: {response.status}")
                 content_length = response.headers.get('Content-Length')
-                if content_length:
-                    self.logger.info(f"Video size: {int(content_length) / (1024*1024):.1f}MB")
+                total_bytes = int(content_length) if content_length and content_length.isdigit() else 0
+                if total_bytes:
+                    self.logger.info(f"Video size: {total_bytes / (1024*1024):.1f}MB")
 
                 if response.status == 200:
-                    # Download in chunks to avoid timeout on large files
-                    chunks = []
                     downloaded = 0
                     chunk_size = 1024 * 1024  # 1MB chunks
 
                     try:
-                        async for chunk in response.content.iter_chunked(chunk_size):
-                            chunks.append(chunk)
-                            downloaded += len(chunk)
+                        with open(dest_path, 'wb') as out_f:
+                            async for chunk in response.content.iter_chunked(chunk_size):
+                                out_f.write(chunk)
+                                downloaded += len(chunk)
 
-                            # Log progress for large files (every 10MB)
-                            if downloaded % (10 * 1024 * 1024) < chunk_size:
-                                self.logger.info(f"Downloaded: {downloaded / (1024*1024):.1f}MB")
+                                if progress_callback:
+                                    try:
+                                        await progress_callback(downloaded, total_bytes)
+                                    except Exception:
+                                        pass
 
-                        content = b''.join(chunks)
+                                # Log progress for large files (every 10MB)
+                                if downloaded % (10 * 1024 * 1024) < chunk_size:
+                                    self.logger.info(f"Downloaded: {downloaded / (1024*1024):.1f}MB")
 
-                        if len(content) > 1000:  # Must be at least 1KB to be a valid video
-                            self.logger.info(f"Successfully downloaded video: {len(content)} bytes ({len(content)/(1024*1024):.1f}MB)")
-                            return content
+                        if downloaded > 1000:  # Must be at least 1KB to be a valid video
+                            self.logger.info(f"Successfully downloaded video: {downloaded} bytes ({downloaded/(1024*1024):.1f}MB) to {dest_path}")
+                            return dest_path
                         else:
-                            self.logger.error(f"Downloaded content too small: {len(content)} bytes")
+                            self.logger.error(f"Downloaded content too small: {downloaded} bytes")
+                            if os.path.exists(dest_path):
+                                os.unlink(dest_path)
                             return None
 
                     except asyncio.TimeoutError:
                         self.logger.error(f"Timeout while downloading (got {downloaded / (1024*1024):.1f}MB so far)")
+                        if os.path.exists(dest_path):
+                            os.unlink(dest_path)
                         return None
                     except Exception as chunk_error:
                         self.logger.error(f"Error during chunked download: {chunk_error}")
+                        if os.path.exists(dest_path):
+                            os.unlink(dest_path)
                         return None
-                elif response.status == 302 or response.status == 301:
-                    # Handle redirects manually if needed
+                elif response.status in (301, 302):
                     redirect_url = response.headers.get('Location')
                     if redirect_url:
                         self.logger.info(f"Following redirect to: {redirect_url}")
-                        return await self.download_video_file(redirect_url)
+                        return await self.download_video_file(redirect_url, dest_path=dest_path, progress_callback=progress_callback)
                 else:
                     self.logger.error(f"HTTP error {response.status}: {response.reason}")
 
@@ -705,6 +729,11 @@ class TikTokDownloader:
             self.logger.error(f"Error downloading video file: {e}")
             self.logger.exception("Full exception:")
 
+        if dest_path and os.path.exists(dest_path):
+            try:
+                os.unlink(dest_path)
+            except Exception:
+                pass
         return None
 
     async def get_video_file_size(self, video_url: str) -> Optional[int]:
@@ -784,14 +813,21 @@ class TikTokDownloader:
         return None
 
 # Utility functions
-async def download_tiktok_video(url: str, quality: str = 'hd') -> Dict:
+async def download_tiktok_video(
+    url: str,
+    quality: str = 'hd',
+    progress_callback = None,
+    dest_path: Optional[str] = None
+) -> Dict:
     """
-    Convenience function to download a TikTok video
-    Returns video info and binary data
+    Convenience function to download a TikTok video directly to disk
+    Returns video info including 'file_path' and 'file_size'
 
     Args:
         url: TikTok video URL
         quality: 'hd' for highest quality, 'standard' for lower quality (faster)
+        progress_callback: Optional async function(downloaded_bytes, total_bytes)
+        dest_path: Optional destination file path
     """
     async with TikTokDownloader() as downloader:
         # Get video information with quality preference
@@ -809,20 +845,23 @@ async def download_tiktok_video(url: str, quality: str = 'hd') -> Dict:
             video_info['size_checked'] = True
 
             # Skip download if file is too large (>2000MB Telegram MTProto limit)
-            # Return info without video_data so bot can provide direct link
+            # Return info without downloading so bot can provide direct link
             if file_size > 2000 * 1024 * 1024:
                 downloader.logger.info(f"File size {file_size / (1024*1024):.1f}MB exceeds 2000MB limit, skipping download")
                 return video_info
 
-        # Download the video file (only if size check passed or wasn't available)
-        video_data = await downloader.download_video_file(video_info['video_url'])
+        # Download the video directly to disk file (OOM-safe for free-tier 512MB RAM)
+        file_path = await downloader.download_video_file(
+            video_info['video_url'],
+            dest_path=dest_path,
+            progress_callback=progress_callback
+        )
 
-        if video_data:
-            video_info['video_data'] = video_data
-            # Update file size with actual downloaded size if HEAD request didn't work
-            if not file_size:
-                video_info['file_size'] = len(video_data)
-                video_info['file_size_mb'] = len(video_data) / (1024 * 1024)
+        if file_path and os.path.exists(file_path):
+            actual_size = os.path.getsize(file_path)
+            video_info['file_path'] = file_path
+            video_info['file_size'] = actual_size
+            video_info['file_size_mb'] = actual_size / (1024 * 1024)
             return video_info
         else:
             return {
